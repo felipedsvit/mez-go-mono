@@ -1,0 +1,62 @@
+openapi: "3.1.0"
+info:
+  title: Mez Go Mono API
+  description: Omnichannel Messaging Gateway API
+  version: "1.0.0"
+servers:
+  - url: /
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: health
+      responses:
+        "200":
+          description: Service is alive
+  /readyz:
+    get:
+      summary: Readiness check
+      operationId: readiness
+      responses:
+        "200":
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+        "503":
+          description: Service not ready
+  /setup:
+    get:
+      summary: Setup wizard
+      operationId: getSetup
+      responses:
+        "200":
+          description: Setup page
+    post:
+      summary: Create admin
+      operationId: postSetup
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        "200":
+          description: Admin created
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      operationId: metrics
+      responses:
+        "200":
+          description: Metrics in Prometheus format
