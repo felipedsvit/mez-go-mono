@@ -6,34 +6,38 @@
 
 ## Status atual
 
+> **Atualizado em 27/jun/2026** — 9 itens implementados e mergeados (C1, C2, C6, C8, H1, H3, H6, H14, M10).
+> 9 commits incrementais no branch `fase8-tracking` desde o commit base.
+> 26 issues abertas, 16 fechadas/planejadas.
+
 | Item | Issue alvo | DREAD | Sev | Resumo | Status |
 |---|---|---:|---|---|---|
-| **C1** | #129 | 8.6 | CRITICAL | WebSocket `CheckOrigin: return true` (CSWSH) | ⏳ |
-| **C2** | #130 | 8.4 | CRITICAL | JWT sem `exp` + secret default público | ⏳ |
-| **C3** | #131 | 9.0 | CRITICAL | Cookie `__Host-` sem `Secure` | ⏳ |
-| **C4** | #132 | 9.0 | CRITICAL | Admin handlers: auth sem authz | ⏳ |
-| **C5** | #133 | 9.0 | CRITICAL | IDOR API REST (sem `RunInTenantTx`) | ⏳ |
-| **C6** | #134 | 8.6 | CRITICAL | Actor backup controlável via header | ⏳ |
-| **C7** | #135 | 8.6 | CRITICAL | Privilege escalation via role editor | ⏳ |
-| **C8** | #136 | 6.6 (PII) | CRITICAL | Webhook body PII no log | ⏳ |
-| **C9** | #137 | 7.6 | CRITICAL | Backup restore aceita `_table` arbitrário | ⏳ |
-| **C10** | #138 | 7.2 | CRITICAL | S3 keys sem validar `tenantID` | ⏳ |
-| **H1** | #139 | 8.0 | HIGH | OIDC `next` open redirect | ⏳ |
-| **H2** | #140 | 5.8 | HIGH | OIDC `nonce` não validado | ⏳ |
-| **H3** | #141 | 6.2 | HIGH | Master key file sem 0600 check (TOCTOU) | ⏳ |
-| **H4** | #142 | 7.6 | HIGH | Setup CLI password sem validação | ⏳ |
-| **H5** | #143 | 6.2 | HIGH | `RunAsPlatform` audit best-effort | ⏳ |
-| **H6** | #144 | 5.0 | HIGH | JWT secret sem length check | ⏳ |
-| **H7** | #145 | 7.2 (web) | HIGH | CSRF `/setup` sem validação | ⏳ |
-| **H8** | #146 | 2.8 (conc:14) | HIGH | `Bus.Unsubscribe*` por `reflect.Pointer()` | ⏳ |
-| **H9** | #147 | 2.6 (conc:13) | HIGH | `OutboxRepo.ClaimNext` sem tx | ⏳ |
-| **H10** | #148 | 2.6 (conc:13) | HIGH | `Bus.Publish*` TOCTOU com Drain | ⏳ |
-| **H11** | #149 | 2.2 | HIGH | Labstack Echo em dead code | ⏳ |
-| **H12** | #150 | 7.4 | HIGH | No TLS termination / redirect | ⏳ |
-| **H13** | #151 | 6.8 | HIGH | Security headers `secure=false` | ⏳ |
-| **H14** | #152 | 6.0 | HIGH | `ReadHeaderTimeout` 0 (slow-loris) | ⏳ |
-| **H15** | #153 | 7.2 | HIGH | `actorEmail` não setado em login audit | ⏳ |
-| M1–M16 | #154–#169 | 2.0–7.4 | MEDIUM | Defense-in-depth, error leaks, audit hardening | ⏳ |
+| **C1** | [#129](https://github.com/felipedsvit/mez-go-mono/issues/129) | 8.6 | CRITICAL | WebSocket `CheckOrigin: return true` (CSWSH) | ✅ `cc08aa9` |
+| **C2** | [#130](https://github.com/felipedsvit/mez-go-mono/issues/130) | 8.4 | CRITICAL | JWT sem `exp` + secret default público | ✅ `38368f4` |
+| **C3** | [#131](https://github.com/felipedsvit/mez-go-mono/issues/131) | 9.0 | CRITICAL | Cookie `__Host-` sem `Secure` | ⏳ |
+| **C4** | [#132](https://github.com/felipedsvit/mez-go-mono/issues/132) | 9.0 | CRITICAL | Admin handlers: auth sem authz | ⏳ |
+| **C5** | [#133](https://github.com/felipedsvit/mez-go-mono/issues/133) | 9.0 | CRITICAL | IDOR API REST (sem `RunInTenantTx`) | ⏳ |
+| **C6** | [#134](https://github.com/felipedsvit/mez-go-mono/issues/134) | 8.6 | CRITICAL | Actor backup controlável via header | ✅ `a6ee296` |
+| **C7** | [#135](https://github.com/felipedsvit/mez-go-mono/issues/135) | 8.6 | CRITICAL | Privilege escalation via role editor | ⏳ |
+| **C8** | [#136](https://github.com/felipedsvit/mez-go-mono/issues/136) | 6.6 (PII) | CRITICAL | Webhook body PII no log | ✅ `bcbb880` |
+| **C9** | [#137](https://github.com/felipedsvit/mez-go-mono/issues/137) | 7.6 | CRITICAL | Backup restore aceita `_table` arbitrário | ⏳ |
+| **C10** | [#138](https://github.com/felipedsvit/mez-go-mono/issues/138) | 7.2 | CRITICAL | S3 keys sem validar `tenantID` | ⏳ |
+| **H1** | [#139](https://github.com/felipedsvit/mez-go-mono/issues/139) | 8.0 | HIGH | OIDC `next` open redirect | ✅ `aba5b9b` |
+| **H2** | [#140](https://github.com/felipedsvit/mez-go-mono/issues/140) | 5.8 | HIGH | OIDC `nonce` não validado | ⏳ |
+| **H3** | [#141](https://github.com/felipedsvit/mez-go-mono/issues/141) | 6.2 | HIGH | Master key file sem 0600 check (TOCTOU) | ✅ `05d6d7a` |
+| **H4** | [#142](https://github.com/felipedsvit/mez-go-mono/issues/142) | 7.6 | HIGH | Setup CLI password sem validação | ⏳ |
+| **H5** | [#143](https://github.com/felipedsvit/mez-go-mono/issues/143) | 6.2 | HIGH | `RunAsPlatform` audit best-effort | ⏳ |
+| **H6** | [#144](https://github.com/felipedsvit/mez-go-mono/issues/144) | 5.0 | HIGH | JWT secret sem length check | ✅ `38368f4` |
+| **H7** | [#145](https://github.com/felipedsvit/mez-go-mono/issues/145) | 7.2 (web) | HIGH | CSRF `/setup` sem validação | ⏳ |
+| **H8** | [#146](https://github.com/felipedsvit/mez-go-mono/issues/146) | 2.8 (conc:14) | HIGH | `Bus.Unsubscribe*` por `reflect.Pointer()` | ⏳ |
+| **H9** | [#147](https://github.com/felipedsvit/mez-go-mono/issues/147) | 2.6 (conc:13) | HIGH | `OutboxRepo.ClaimNext` sem tx | ⏳ |
+| **H10** | [#148](https://github.com/felipedsvit/mez-go-mono/issues/148) | 2.6 (conc:13) | HIGH | `Bus.Publish*` TOCTOU com Drain | ⏳ |
+| **H11** | [#149](https://github.com/felipedsvit/mez-go-mono/issues/149) | 2.2 | HIGH | Labstack Echo em dead code | ⏳ |
+| **H12** | [#150](https://github.com/felipedsvit/mez-go-mono/issues/150) | 7.4 | HIGH | No TLS termination / redirect | ⏳ |
+| **H13** | [#151](https://github.com/felipedsvit/mez-go-mono/issues/151) | 6.8 | HIGH | Security headers `secure=false` | ⏳ |
+| **H14** | [#152](https://github.com/felipedsvit/mez-go-mono/issues/152) | 6.0 | HIGH | `ReadHeaderTimeout` 0 (slow-loris) | ✅ `5fdc0b7` |
+| **H15** | [#153](https://github.com/felipedsvit/mez-go-mono/issues/153) | 7.2 | HIGH | `actorEmail` não setado em login audit | ⏳ |
+| M1–M16 | #154–#169 | 2.0–7.4 | MEDIUM | Defense-in-depth, error leaks, audit hardening | 🟡 M10 ✅ `4177bf2` |
 | L1–L18 | #170–#187 | 1.0–2.4 | LOW | Docker, helpers, env hygiene | ⏳ |
 
 ## Sequência de execução
