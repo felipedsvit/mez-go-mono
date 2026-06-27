@@ -1,62 +1,352 @@
 openapi: "3.1.0"
 info:
   title: Mez Go Mono API
-  description: Omnichannel Messaging Gateway API
-  version: "1.0.0"
+  description: Omnichannel Messaging Gateway API (Phase 2 — Inbound Pipeline)
+  version: "0.2.0"
 servers:
   - url: /
+security:
+  - bearerAuth: []
+
 paths:
   /health:
     get:
       summary: Health check
       operationId: health
+      security: []
       responses:
         "200":
           description: Service is alive
+
   /readyz:
     get:
       summary: Readiness check
       operationId: readiness
+      security: []
       responses:
         "200":
           description: Service is ready
-          content:
-            application/json:
-              schema:
-                type: object
         "503":
           description: Service not ready
-  /setup:
-    get:
-      summary: Setup wizard
-      operationId: getSetup
-      responses:
-        "200":
-          description: Setup page
-    post:
-      summary: Create admin
-      operationId: postSetup
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              required: [email, password]
-              properties:
-                email:
-                  type: string
-                  format: email
-                password:
-                  type: string
-                  minLength: 8
-      responses:
-        "200":
-          description: Admin created
+
   /metrics:
     get:
       summary: Prometheus metrics
       operationId: metrics
+      security: []
       responses:
         "200":
           description: Metrics in Prometheus format
+
+  /webhooks/meta/{app_id}:
+    post:
+      summary: Receive a Meta webhook (WABA / Instagram / Messenger)
+      operationId: receiveMetaWebhook
+      security: []
+      parameters:
+        - name: app_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetaWebhookPayload"
+      responses:
+        "200":
+          description: Webhook accepted (and persisted, if a message was present)
+        "403":
+          description: Invalid or missing X-Hub-Signature-256
+        "404":
+          description: app_id not configured
+        "503":
+          description: app secret not configured (fail-closed)
+
+  /webhooks/telegram/{tenant_id}:
+    post:
+      summary: Receive a Telegram Bot webhook
+      operationId: receiveTelegramWebhook
+      security: []
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TelegramUpdate"
+      responses:
+        "200":
+          description: Update accepted
+        "403":
+          description: Invalid or missing X-Telegram-Bot-Api-Secret-Token
+        "503":
+          description: bot secret not configured (fail-closed)
+
+  /api/conversations:
+    get:
+      summary: List conversations of the current tenant
+      operationId: listConversations
+      responses:
+        "200":
+          description: Conversations list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationList"
+        "401":
+          description: Missing or invalid Bearer token
+
+  /api/conversations/{id}/assign:
+    post:
+      summary: Assign a conversation to an agent (Fase 2: just sets the field)
+      operationId: assignConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id]
+              properties:
+                agent_id:
+                  type: string
+      responses:
+        "200":
+          description: Assignment recorded
+        "404":
+          description: Conversation not found
+
+  /api/conversations/{id}/resolve:
+    post:
+      summary: Mark a conversation as resolved
+      operationId: resolveConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Conversation resolved
+
+  /api/messages:
+    get:
+      summary: List messages of a conversation
+      operationId: listMessages
+      parameters:
+        - name: conversation_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Messages list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageList"
+    post:
+      summary: Send a message (Fase 2: NOT IMPLEMENTED — returns 501)
+      operationId: postMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OutboundMessage"
+      responses:
+        "501":
+          description: Not implemented (Fase 3)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotImplemented"
+
+  /api/channels/{channel}/health:
+    get:
+      summary: Health of a channel
+      operationId: channelHealth
+      parameters:
+        - name: channel
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Channel health
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelHealth"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: HS256 JWT with claim tenant_id
+
+  schemas:
+    Conversation:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        channel:
+          type: string
+          enum: [waba, whatsmeow, instagram, messenger, telegram_bot]
+        contact_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [open, pending, resolved]
+        external_id:
+          type: string
+        assigned_agent:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ConversationList:
+      type: object
+      properties:
+        conversations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Conversation"
+        total:
+          type: integer
+
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        channel:
+          type: string
+        conversation_id:
+          type: string
+          format: uuid
+        contact_id:
+          type: string
+          format: uuid
+        direction:
+          type: string
+          enum: [inbound, outbound]
+        type:
+          type: string
+        status:
+          type: string
+          enum: [received, routed, notified]
+        body:
+          type: string
+        provider_msg_id:
+          type: string
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+
+    MessageList:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        total:
+          type: integer
+
+    OutboundMessage:
+      type: object
+      required: [conversation_id, type, body]
+      properties:
+        conversation_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [text, image, audio, video, document, sticker, location, button, template, reaction, system]
+        body:
+          type: string
+        metadata:
+          type: object
+
+    NotImplemented:
+      type: object
+      properties:
+        error:
+          type: string
+          example: not_implemented
+        message:
+          type: string
+        phase:
+          type: string
+          example: fase3
+
+    ChannelHealth:
+      type: object
+      properties:
+        channel:
+          type: string
+        status:
+          type: string
+        phase:
+          type: string
+        note:
+          type: string
+
+    MetaWebhookPayload:
+      type: object
+      description: Simplified shape — real payload is much larger
+      properties:
+        object:
+          type: string
+        entry:
+          type: array
+          items:
+            type: object
+
+    TelegramUpdate:
+      type: object
+      properties:
+        update_id:
+          type: integer
+        message:
+          type: object

@@ -35,6 +35,9 @@ type Config struct {
 	FFmpegConcurrency  int    `mapstructure:"ffmpeg_concurrency"`
 	LogLevel           string `mapstructure:"log_level"`
 	MetricsAddr        string `mapstructure:"metrics_addr"`
+	APIJWTSecret       string `mapstructure:"api_jwt_secret"`
+	ReconcileBatch     int    `mapstructure:"reconcile_batch"`
+	OutboxBatch        int    `mapstructure:"outbox_batch"`
 }
 
 func Load() (Config, error) {
@@ -54,6 +57,8 @@ func Load() (Config, error) {
 	v.SetDefault("s3_bucket", "mezgo-media")
 	v.SetDefault("s3_backup_bucket", "mezgo-backups")
 	v.SetDefault("session_ttl", "24h")
+	v.SetDefault("reconcile_batch", 100)
+	v.SetDefault("outbox_batch", 32)
 
 	cfg := Config{}
 	if err := v.Unmarshal(&cfg); err != nil {
