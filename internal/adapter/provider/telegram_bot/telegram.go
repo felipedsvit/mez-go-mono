@@ -76,6 +76,9 @@ func (a *Adapter) doAction(ctx context.Context, req port.OutboundRequest) (strin
 
 func parseChatID(s string) (int64, error) {
 	// Phase 3: aceita só números. Phase 4 adiciona @username → ID resolve.
+	if s == "" {
+		return 0, fmt.Errorf("telegram: chat_id vazio")
+	}
 	var n int64
 	for _, c := range s {
 		if c < '0' || c > '9' {
