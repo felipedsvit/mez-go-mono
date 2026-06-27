@@ -180,13 +180,40 @@ func (s *Service) runReset(job *Job, req ResetRequest) {
 		job.UpdatedAt = now()
 	})
 
-	// 5. Audit log.
-	s.recordAudit(ctx, req.Actor, cdomain.ActionTenantReset, req.TenantID, req.TenantID, map[string]any{
-		"tables_cleared": crossCleared + tenantCleared,
-		"media_removed":  mediaRemoved,
-		"backup_removed": backupRemoved,
-		"s3_removed":     totalS3,
-	})
+	// 5. Audit log — Issue #148 (H5, CWE-778): atômico via
+	// RunAsPlatform. C5 row (platform:access) commitada com a
+	// mutation row (tenant.reset com metadata rico).
+	if err := s.runAsPlatform(ctx, req.Actor, cdomain.ActionTenantReset, req.TenantID, "tenant", req.TenantID,
+		map[string]any{
+			"tables_cleared": crossCleared + tenantCleared,
+			"media_removed":  mediaRemoved,
+			"backup_removed": backupRemoved,
+			"s3_removed":     totalS3,
+		},
+		func(ctx context.Context) error {
+			if s.audit == nil {
+				return nil
+			}
+			entry := &cdomain.AuditEntry{
+				ActorID:    req.Actor.ID,
+				ActorEmail: req.Actor.Email,
+				Action:     cdomain.ActionTenantReset,
+				TargetType: "tenant",
+				TargetID:   req.TenantID,
+				TenantID:   req.TenantID,
+				Metadata: map[string]any{
+					"tables_cleared": crossCleared + tenantCleared,
+					"media_removed":  mediaRemoved,
+					"backup_removed": backupRemoved,
+					"s3_removed":     totalS3,
+				},
+				IP:        req.Actor.IP,
+				CreatedAt: now(),
+			}
+			return s.audit.Record(ctx, entry)
+		}); err != nil {
+		s.log.Warn().Err(err).Str("tenant", req.TenantID).Msg("backup: audit atômico falhou (best-effort segue)")
+	}
 
 	finished := now()
 	updateJob(job, func() {

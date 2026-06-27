@@ -74,6 +74,7 @@ import (
 	"github.com/felipedsvit/mez-go-mono/pkg/health"
 	"github.com/felipedsvit/mez-go-mono/pkg/lifecycle"
 	"github.com/felipedsvit/mez-go-mono/pkg/metrics"
+	"github.com/felipedsvit/mez-go-mono/pkg/netutil"
 )
 
 // AppContext agrupa tudo o que o ciclo de vida do processo precisa.
@@ -293,6 +294,9 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		Store:        store,
 		PGXPool:      appPool,
 		PlatformPool: platformPool,
+		// Issue #148 (H5, CWE-778): adminDB permite RunAsPlatform C5
+		// atômico para audit. Sem ele, backup cai no best-effort legacy.
+		AdminDB:      adminDB,
 		Jobs:         backupJobs,
 		Audit:        adminRepos.Audit,
 		Version:      "0.6.0-fase6",
@@ -428,23 +432,21 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
 		Handler: handler,
-		// Issue #152 (H14 audit, DREAD 6.0): slow-loris defense.
-		// ReadHeaderTimeout limita o tempo que o cliente tem para enviar
-		// os headers — sem isso, 1 byte a cada 14s mantém a conexão
-		// viva indefinidamente (ReadTimeout só conta após o request body).
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		// Limite de header em 1 MiB. Headers legítimos (Authorization,
-		// Cookies) cabem em < 4 KiB; 1 MiB protege contra heap blow-up
-		// por headers gigantes.
-		MaxHeaderBytes: 1 << 20,
 		// Issue #151 (H12 audit, Sprint 0B): TLS nativo opcional. Se
 		// MEZ_HTTP_TLS_CERT_FILE + _KEY_FILE estão setados, ListenAndServeTLS
 		// é usado em vez de ListenAndServe. Em prod recomenda-se proxy
 		// reverso; isto é fallback.
 	}
+	// Issue #143 (H14b, CWE-400): aplica timeouts seguros do config,
+	// com defaults se cfg for 0/unset. Defesa-em-profundidade contra
+	// slow-loris — não dá para desabilitar por env vazia.
+	srv = netutil.SafeServer(srv, netutil.SafeServerConfig{
+		ReadHeaderTimeout: parseDurationOrZero(cfg.HTTPReadHeaderTimeout),
+		ReadTimeout:       parseDurationOrZero(cfg.HTTPReadTimeout),
+		WriteTimeout:      parseDurationOrZero(cfg.HTTPWriteTimeout),
+		IdleTimeout:       parseDurationOrZero(cfg.HTTPIdleTimeout),
+		MaxHeaderBytes:    cfg.HTTPMaxHeaderBytes,
+	})
 	// Issue #151: se TLS nativo setado, ListenAndServeTLS; senão plain.
 	tlsEnabled := cfg.HTTPTLSCertFile != "" && cfg.HTTPTLSKeyFile != ""
 	if tlsEnabled {
@@ -651,6 +653,20 @@ func runWithGracefulShutdown(ctx context.Context, app *AppContext) error {
 }
 
 var _ = chi.NewRouter
+
+// parseDurationOrZero parseia uma string Go duration. Retorna 0 se a
+// string for vazia ou inválida — SafeServer aplica o default seguro
+// nesse caso (Issue #143 H14b).
+func parseDurationOrZero(s string) time.Duration {
+	if s == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0
+	}
+	return d
+}
 
 // redactedHost extrai o host:port de uma DSN pgx para log (sem senha).
 // Ex.: "postgres://user:pass@host:5432/db?sslmode=disable" → "host:5432".
