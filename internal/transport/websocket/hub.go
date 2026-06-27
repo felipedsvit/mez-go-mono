@@ -14,13 +14,17 @@ package websocket
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
 )
+
+var ErrHubClosed = errors.New("ws: hub is closed")
 
 const (
 	// Buffer por subscriber (drop-safe: se o cliente demorar, mensagens
@@ -47,6 +51,7 @@ type Hub struct {
 
 	mu          sync.RWMutex
 	subscribers map[string]map[*Subscriber]struct{} // tenantID -> set
+	closed      atomic.Bool
 }
 
 // NewHub cria o hub.
@@ -58,15 +63,22 @@ func NewHub(log zerolog.Logger) *Hub {
 }
 
 // Subscribe adiciona um subscriber. Caller deve chamar Unsubscribe ao
-// desconectar.
-func (h *Hub) Subscribe(tenantID string, s *Subscriber) {
+// desconectar. Retorna ErrHubClosed se o hub foi fechado.
+func (h *Hub) Subscribe(tenantID string, s *Subscriber) error {
+	if h.closed.Load() {
+		return ErrHubClosed
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.closed.Load() {
+		return ErrHubClosed
+	}
 	if _, ok := h.subscribers[tenantID]; !ok {
 		h.subscribers[tenantID] = make(map[*Subscriber]struct{})
 	}
 	h.subscribers[tenantID][s] = struct{}{}
 	h.log.Debug().Str("tenant", tenantID).Int("total", len(h.subscribers[tenantID])).Msg("ws: subscribed")
+	return nil
 }
 
 // Unsubscribe remove um subscriber.
@@ -110,6 +122,52 @@ func (h *Hub) Stats() map[string]int {
 		out[k] = len(v)
 	}
 	return out
+}
+
+// Shutdown fecha todos os subscribers e impede novos. Idempotente.
+func (h *Hub) Shutdown(ctx context.Context) error {
+	h.mu.Lock()
+	if !h.closed.CompareAndSwap(false, true) {
+		h.mu.Unlock()
+		return nil // já fechado
+	}
+
+	// Coleta todos os subscribers.
+	all := make([]*Subscriber, 0)
+	for _, subs := range h.subscribers {
+		for s := range subs {
+			all = append(all, s)
+		}
+	}
+	// Limpa o mapa para não ter mais referências.
+	h.subscribers = make(map[string]map[*Subscriber]struct{})
+	h.mu.Unlock()
+
+	h.log.Info().Int("subscribers", len(all)).Msg("ws: shutting down hub")
+
+	// Fecha todos os subscribers concorrentemente (cada Close é idempotente).
+	done := make(chan struct{}, len(all))
+	for _, s := range all {
+		s := s
+		go func() {
+			s.Close()
+			done <- struct{}{}
+		}()
+	}
+
+	// Aguarda todos ou timeout.
+	received := 0
+	for range all {
+		select {
+		case <-done:
+			received++
+		case <-ctx.Done():
+			h.log.Warn().Int("remaining", len(all)-received).Msg("ws: shutdown timeout")
+			return ctx.Err()
+		}
+	}
+	h.log.Info().Msg("ws: hub shutdown complete")
+	return nil
 }
 
 // Subscriber é uma conexão WS individual.
@@ -182,7 +240,7 @@ func (s *Subscriber) WritePump(ctx context.Context) {
 	}
 }
 
-// Close fecha o subscriber. Idempotente.
+// Close fecha o subscriber. Idempotente. Nil-safe para testes.
 func (s *Subscriber) Close() {
 	s.closeMu.Lock()
 	defer s.closeMu.Unlock()
@@ -191,7 +249,9 @@ func (s *Subscriber) Close() {
 	}
 	s.closed = true
 	close(s.send)
-	_ = s.conn.Close()
+	if s.conn != nil {
+		_ = s.conn.Close()
+	}
 }
 
 // DefaultUpgrader devolve um Upgrader permissivo para dev/test apenas.

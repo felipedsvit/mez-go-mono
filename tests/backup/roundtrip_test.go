@@ -501,6 +501,16 @@ func applyAllMigrationsForBackup(ctx context.Context, pool *pgxpool.Pool) error 
 			return fmt.Errorf("apply %s: %w", mf, err)
 		}
 	}
+	// Workaround D3: o ALTER DATABASE em 0005_backup_gucs.up.sql é
+	// transacional em PG 16 e não persiste no testcontainer. Registra
+	// o GUC na sessão atual para que as policies RLS funcionem.
+	if _, err := pool.Exec(ctx, "SET mez.tenant_id TO ''"); err != nil {
+		return fmt.Errorf("set mez.tenant_id: %w", err)
+	}
+	if _, err := pool.Exec(ctx, "SET mez.iso_level TO 'read_committed'"); err != nil {
+		return fmt.Errorf("set mez.iso_level: %w", err)
+	}
+
 	// Cria a tabela schema_migrations que o golang-migrate usa (a nossa
 	// application manual de migrations não cria). Usada pelo restore
 	// para comparar SchemaVersion.

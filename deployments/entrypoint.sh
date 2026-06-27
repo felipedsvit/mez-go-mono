@@ -1,13 +1,13 @@
 #!/bin/sh
 set -e
 
-# Run migrations before starting the server.
-# Exit immediately if migration fails (fail-closed).
-echo "Running migrations..."
-mez-go-mono migrate up || {
-    echo "Migration failed. Container will not start."
-    exit 1
-}
-
-echo "Starting server..."
+# Fase 8 #99 sub-issue: migrations são executadas inline pelo
+# `serve` (via runMigrateInline) quando MEZ_MIGRATE_ON_BOOT=true
+# (default). Em prod, desligue MEZ_MIGRATE_ON_BOOT e rode migrations
+# em job separado.
+#
+# Antes: `migrate up && serve` (2 processos, race entre o fim do
+# migrate e a abertura do serve).
+# Agora: `serve` (1 processo, atomic — falha no migrate aborta o
+# boot antes de qualquer serviço subir).
 exec mez-go-mono serve

@@ -19,10 +19,16 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/stretchr/testify/require"
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 	"github.com/felipedsvit/mez-go-mono/internal/core/port"
+	"github.com/felipedsvit/mez-go-mono/internal/testutil"
 )
+
+func TestMain(m *testing.M) {
+	testutil.VerifyTestMain(m)
+}
 
 // noopStateSaver é um whatsappStateSaver in-memory para testes.
 type noopStateSaver struct {
@@ -273,18 +279,21 @@ func TestDispatcher_BoundedDrop(t *testing.T) {
 	d.Start(ctx,
 		func(_ context.Context, _ any) {
 			processed.Add(1)
-			time.Sleep(50 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 		},
 		func(_ context.Context, _ any) {},
 	)
 	defer d.Stop()
 
-	// Estoura o buffer (2048) com eventos — alguns devem ser dropados.
+	// Estoura o buffer com eventos — alguns devem ser dropados.
 	for i := 0; i < eventBuffer+10; i++ {
 		d.HandleRaw(MessageEvent{})
 	}
-	if processed.Load() == 0 {
-		t.Error("esperava ao menos 1 processado")
-	}
-	t.Logf("processados=%d (drop-safe em ação)", processed.Load())
+
+	// Aguarda até que ao menos 1 evento seja processado (remove flake de timing).
+	require.Eventually(t, func() bool {
+		return processed.Load() > 0
+	}, 5*time.Second, 50*time.Millisecond, "nenhum evento foi processado — bounded drop deve dropar alguns, mas ao menos 1 deve passar")
+
+	t.Logf("processados=%d de %d (drop-safe em ação)", processed.Load(), eventBuffer+10)
 }

@@ -11,8 +11,13 @@ import (
 
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/broker"
 	"github.com/felipedsvit/mez-go-mono/internal/core/event"
+	"github.com/felipedsvit/mez-go-mono/internal/testutil"
 	"github.com/felipedsvit/mez-go-mono/pkg/metrics"
 )
+
+func TestMain(m *testing.M) {
+	testutil.VerifyTestMain(m)
+}
 
 func TestPublishInbound_DropSafe(t *testing.T) {
 	log := zerolog.Nop()
@@ -24,6 +29,11 @@ func TestPublishInbound_DropSafe(t *testing.T) {
 		StatusBuffer:   1,
 		DLQBuffer:      1,
 	}, log, metricsReg)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		_ = bus.Drain(ctx)
+	})
 
 	for i := 0; i < 100; i++ {
 		bus.PublishInbound(event.InboundEvent{
@@ -40,6 +50,11 @@ func TestPublishInbound_HandlerCalled(t *testing.T) {
 	bus := broker.NewBus(broker.BusConfig{
 		InboundBuffer: 10,
 	}, log, metricsReg)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+		_ = bus.Drain(ctx)
+	})
 
 	var called atomic.Int32
 	bus.SubscribeInbound(func(evt event.InboundEvent) {

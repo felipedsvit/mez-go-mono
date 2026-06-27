@@ -9,7 +9,12 @@ import (
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 	"github.com/rs/zerolog"
+	"github.com/felipedsvit/mez-go-mono/internal/testutil"
 )
+
+func TestMain(m *testing.M) {
+	testutil.VerifyTestMain(m)
+}
 
 type fakeRepo struct {
 	mu      sync.Mutex

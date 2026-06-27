@@ -9,7 +9,12 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 	"github.com/felipedsvit/mez-go-mono/internal/core/event"
 	"github.com/rs/zerolog"
+	"github.com/felipedsvit/mez-go-mono/internal/testutil"
 )
+
+func TestMain(m *testing.M) {
+	testutil.VerifyTestMain(m)
+}
 
 // ---- fakes ---------------------------------------------------------------
 

@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/auth/argon2"
@@ -71,6 +72,7 @@ import (
 	ucsettings "github.com/felipedsvit/mez-go-mono/internal/usecase/settings"
 	"github.com/felipedsvit/mez-go-mono/pkg/config"
 	"github.com/felipedsvit/mez-go-mono/pkg/health"
+	"github.com/felipedsvit/mez-go-mono/pkg/lifecycle"
 	"github.com/felipedsvit/mez-go-mono/pkg/metrics"
 )
 
@@ -82,6 +84,11 @@ type AppContext struct {
 	Metrics  *metrics.Registry
 	Bus      *broker.Bus
 	TxRunner *postgres.TxRunner
+
+	// DB pools (Fase 8 #97: tear-down coordenado).
+	AppPool      *pgxpool.Pool
+	PlatformPool *pgxpool.Pool
+	AdminDB      *adminrepo.DB
 
 	// Repos
 	Outbox     *postgres.OutboxRepo
@@ -118,6 +125,9 @@ type AppContext struct {
 	// Webhook handlers
 	MetaHandler     *meta.Handler
 	TelegramHandler *telegram.Handler
+
+	// Whatsmeow (Fase 8 #97: DisconnectAll no shutdown).
+	WhatsmeowManager *whatsmeow.Manager
 
 	// HTTP
 	HTTPServer *http.Server
@@ -443,6 +453,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 
 	return &AppContext{
 		Log: log, Cfg: cfg, Health: hc, Metrics: metricsReg, Bus: bus, TxRunner: txRunner,
+		AppPool: appPool, PlatformPool: platformPool, AdminDB: adminDB,
 		Outbox: outboxRepo, InboundEvs: inboundEvsRepo,
 		ConvRepo: convRepo, MsgRepo: msgRepo, TenantRepo: tenantRepo,
 		SenderRegistry: senderRegistry, SenderService: senderSvc, ListService: listSvc,
@@ -451,22 +462,149 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		Ingestor: ingestor, Router: routerSvc, Relay: relay, Reconciler: reconciler,
 		BackupService: backupSvc, Store: store, AdminVerifier: loginSvc,
 		AdminServer: adminSrv,
-		MetaHandler: metaH, TelegramHandler: tgH, HTTPServer: srv,
+		MetaHandler: metaH, TelegramHandler: tgH,
+		WhatsmeowManager: waManager,
+		HTTPServer:       srv,
 	}, nil
 }
 
-// runWithGracefulShutdown executa app.Run com shutdown coordenado (D10+C12).
+// wireRunner compõe o lifecycle.Runner com as phases de boot/shutdown
+// (Fase 8 #97). wireServices já construiu todos os objetos — as phases
+// aqui só registram Stop (LIFO) para shutdown coordenado. Phases com
+// goroutines long-running (HTTP, relay, reconciler) são iniciadas via
+// Runner.Run, que encapsula recover() + wg.Done (C10).
+func wireRunner(app *AppContext) *lifecycle.Runner {
+	sink := metrics.NewRunnerSink(app.Metrics)
+	r := lifecycle.NewRunner(app.Log, sink)
+
+	// Phase 1-13: objetos já construídos em wireServices. Start=nil.
+	// Apenas Stop é registrado onde há algo a fazer no shutdown.
+
+	// Phase 14: pools (DB). LIFO: fecha por último.
+	r.AddPhase(lifecycle.Phase{
+		Name:    lifecycle.PhasePools,
+		Timeout: 5 * time.Second,
+		Stop: func(ctx context.Context) error {
+			if app.AdminDB != nil {
+				app.AdminDB.Close()
+			}
+			if app.PlatformPool != nil {
+				app.PlatformPool.Close()
+			}
+			if app.AppPool != nil {
+				app.AppPool.Close()
+			}
+			return nil
+		},
+	})
+
+	// Phase 11: whatsmeow Manager.DisconnectAll (D10).
+	r.AddPhase(lifecycle.Phase{
+		Name:    lifecycle.PhaseWhatsmeow,
+		Timeout: 30 * time.Second,
+		Stop: func(ctx context.Context) error {
+			if app.WhatsmeowManager == nil {
+				return nil
+			}
+			// DisconnectAll bloqueia — usa ctx para fail-fast.
+			done := make(chan struct{})
+			go func() {
+				app.WhatsmeowManager.DisconnectAll()
+				close(done)
+			}()
+			select {
+			case <-done:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	})
+
+	// Phase 10: status consumer.
+	r.AddPhase(lifecycle.Phase{
+		Name:    lifecycle.PhaseStatusConsumer,
+		Timeout: 2 * time.Second,
+		Stop: func(ctx context.Context) error {
+			// StatusConsumer não tem Stop; se houver goroutine interna,
+			// derramar via ctx. Aqui é noop (Fase 3 não tem Stop).
+			return nil
+		},
+	})
+
+	// Phase 9: reconciler.
+	r.AddPhase(lifecycle.Phase{
+		Name:    lifecycle.PhaseReconciler,
+		Timeout: 5 * time.Second,
+		Stop: func(ctx context.Context) error {
+			app.Reconciler.Stop()
+			return nil
+		},
+	})
+
+	// Phase 8: outbox relay.
+	r.AddPhase(lifecycle.Phase{
+		Name:    lifecycle.PhaseRelay,
+		Timeout: 5 * time.Second,
+		Stop: func(ctx context.Context) error {
+			app.Relay.Stop()
+			return nil
+		},
+	})
+
+	// Phase 6: bus.
+	r.AddPhase(lifecycle.Phase{
+		Name:    lifecycle.PhaseBus,
+		Timeout: 10 * time.Second,
+		Stop: func(ctx context.Context) error {
+			return app.Bus.Drain(ctx)
+		},
+	})
+
+	// Phase 14: HTTP server (último a subir, primeiro a descer).
+	r.AddPhase(lifecycle.Phase{
+		Name:    lifecycle.PhaseHTTP,
+		Timeout: 30 * time.Second,
+		Start: func(ctx context.Context) error {
+			app.Log.Info().Str("addr", app.Cfg.HTTPAddr).Msg("http: listening")
+			// Não bloqueia: ouve em goroutine (Runner.Run).
+			return nil
+		},
+		Stop: func(ctx context.Context) error {
+			return app.HTTPServer.Shutdown(ctx)
+		},
+	})
+
+	return r
+}
+
+// runWithGracefulShutdown coordena boot/shutdown via lifecycle.Runner
+// (Fase 8 #97). Em vez de goroutines ad-hoc, tudo passa pelo Runner.
+//
+// Sequência:
+//
+//  1. Runner.Boot() — executa Start de cada phase em ordem.
+//  2. Runner.Run() — inicia HTTP, Relay, Reconciler como goroutines
+//     long-running com recover (C10).
+//  3. Bloqueia em sigCh ou erro fata.
+//  4. Runner.Shutdown() — phases em LIFO: HTTP → bus → relay → reconciler
+//     → whatsmeow → pools.
+//  5. Runner.Wait() — aguarda goroutines Run-style drenarem.
 func runWithGracefulShutdown(ctx context.Context, app *AppContext) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	errCh := make(chan error, 4)
+	runner := wireRunner(app)
 
-	// Goroutine: HTTP server.
-	go func() {
-		app.Log.Info().Str("addr", app.Cfg.HTTPAddr).Msg("http: listening")
+	// Boot: cada phase Start (HTTP, etc.). Como wireServices já
+	// construiu tudo, as phases aqui só registram shutdown.
+	if err := runner.Boot(ctx); err != nil {
+		return fmt.Errorf("lifecycle boot: %w", err)
+	}
+
+	// Goroutines long-running com recover (C10).
+	runner.Run(ctx, "http-server", func(c context.Context) error {
 		// Issue #151 (H12 audit, Sprint 0B): TLS nativo opcional.
-		// Se cert+key setados, ListenAndServeTLS; senão plain.
 		var err error
 		if app.Cfg.HTTPTLSCertFile != "" && app.Cfg.HTTPTLSKeyFile != "" {
 			app.Log.Info().Str("cert", app.Cfg.HTTPTLSCertFile).Msg("http: TLS enabled")
@@ -475,54 +613,40 @@ func runWithGracefulShutdown(ctx context.Context, app *AppContext) error {
 			err = app.HTTPServer.ListenAndServe()
 		}
 		if err != nil && err != http.ErrServerClosed {
-			errCh <- fmt.Errorf("http: %w", err)
+			return fmt.Errorf("http: %w", err)
 		}
-	}()
+		return nil
+	})
 
-	// Goroutine: Outbox Relay.
-	go func() {
-		if err := app.Relay.Run(ctx); err != nil {
-			errCh <- fmt.Errorf("relay: %w", err)
-		}
-	}()
+	runner.Run(ctx, "outbox-relay", func(c context.Context) error {
+		return app.Relay.Run(c)
+	})
 
-	// Goroutine: Reconciler.
-	go func() {
-		if err := app.Reconciler.Run(ctx); err != nil {
-			errCh <- fmt.Errorf("reconciler: %w", err)
-		}
-	}()
+	runner.Run(ctx, "reconciler", func(c context.Context) error {
+		return app.Reconciler.Run(c)
+	})
 
+	// Aguarda sinal ou erro fatal.
 	select {
 	case sig := <-sigCh:
 		app.Log.Info().Str("signal", sig.String()).Msg("shutdown: signal received")
-	case err := <-errCh:
-		app.Log.Error().Err(err).Msg("shutdown: fatal error")
+	case <-ctx.Done():
+		app.Log.Info().Msg("shutdown: context cancelled")
 	}
 
+	// Shutdown coordenado (LIFO com timeout).
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	if err := app.HTTPServer.Shutdown(shutdownCtx); err != nil {
-		app.Log.Error().Err(err).Msg("http shutdown")
-	}
-	if err := app.Bus.Drain(shutdownCtx); err != nil {
-		app.Log.Error().Err(err).Msg("bus drain")
-	}
-	app.Relay.Stop()
-	app.Reconciler.Stop()
-
-	done := make(chan struct{})
-	go func() {
-		app.Log.Info().Msg("shutdown: complete")
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-shutdownCtx.Done():
-		app.Log.Warn().Msg("shutdown: timeout")
+	if err := runner.Shutdown(shutdownCtx); err != nil {
+		app.Log.Error().Err(err).Msg("runner shutdown")
 	}
 
+	// Aguarda goroutines Run-style terminarem.
+	if err := runner.Wait(shutdownCtx); err != nil {
+		app.Log.Warn().Err(err).Msg("runner wait timeout")
+	}
+
+	app.Log.Info().Msg("shutdown: complete")
 	return nil
 }
 

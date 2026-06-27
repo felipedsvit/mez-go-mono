@@ -57,7 +57,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sub := NewSubscriber(string(tenantID), conn, h.log)
-	h.hub.Subscribe(string(tenantID), sub)
+	if err := h.hub.Subscribe(string(tenantID), sub); err != nil {
+		h.log.Error().Err(err).Msg("ws: subscribe failed (hub closed?)")
+		_ = conn.Close()
+		return
+	}
 	defer h.hub.Unsubscribe(string(tenantID), sub)
 
 	// writePump recupera de panic (C10).
