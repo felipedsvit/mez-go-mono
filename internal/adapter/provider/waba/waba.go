@@ -1,11 +1,18 @@
 // Package waba é o adapter do canal WhatsApp Business Cloud API (oficial e
-// stateless). O inbound vem via /webhooks/meta (handler da Fase 2).
-// Esta implementação cobre apenas outbound (Send + actions).
+// stateless). Diferente do whatsmeow/tgbot, a entrada (inbound) NÃO vem do
+// adapter: a Meta faz push HTTP para /webhooks/meta, que normaliza e chama o
+// Ingestor diretamente. O adapter cuida só da saída, traduzindo o pedido
+// canônico (port.OutboundRequest) para a Graph API.
+//
+// Connect/Disconnect são no-op (não há sessão persistente).
+//
+// Fonte de verdade das capacidades e payloads: docs/canais/whatsapp-cloud.md.
 package waba
 
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/rs/zerolog"
 
@@ -13,67 +20,27 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 )
 
-// Client é o cliente HTTP da Graph API do WhatsApp Cloud.
-type Client struct {
-	baseURL       string
-	version       string
-	phoneNumberID string
-	token         string
-}
-
-// NewClient cria o client. baseURL/version vazios usam os defaults da Meta.
-func NewClient(baseURL, version, phoneNumberID, token string) *Client {
-	if baseURL == "" {
-		baseURL = "https://graph.facebook.com"
-	}
-	if version == "" {
-		version = "v21.0"
-	}
-	return &Client{
-		baseURL:       baseURL,
-		version:       version,
-		phoneNumberID: phoneNumberID,
-		token:         token,
-	}
-}
-
-// SendMessage envia mensagem e devolve wamid.
-func (c *Client) SendMessage(_ context.Context, _ map[string]any) (string, error) {
-	// Stub mínimo — implementação real usa http.Client + Graph API.
-	// Deferido para Phase 4 quando provider é realmente chamado em prod.
-	return "wamid-stub", nil
-}
-
-// MarkRead marca mensagem como lida.
-func (c *Client) MarkRead(_ context.Context, _ string) error {
-	return nil
-}
-
-// DeleteMessage revoga mensagem.
-func (c *Client) DeleteMessage(_ context.Context, _ string) error {
-	return nil
-}
-
-// Adapter implementa port.Sender para WABA.
+// Adapter implementa port.Sender para o WhatsApp Cloud API.
 type Adapter struct {
 	tenant domain.TenantID
 	client *Client
-	log    zerolog.Logger
+	logger zerolog.Logger
 }
 
-// New cria o adapter.
-func New(tenant domain.TenantID, client *Client, log zerolog.Logger) *Adapter {
-	l := log.With().Str("channel", string(domain.ChannelWABA)).Str("tenant", string(tenant)).Logger()
-	return &Adapter{tenant: tenant, client: client, log: l}
+// New cria o adapter a partir do cliente da Graph API.
+func New(tenant domain.TenantID, client *Client, logger zerolog.Logger) *Adapter {
+	l := logger.With().Str("channel", string(domain.ChannelWABA)).Str("tenant", string(tenant)).Logger()
+	return &Adapter{tenant: tenant, client: client, logger: l}
 }
 
 // Channel retorna o canal lógico.
 func (a *Adapter) Channel() domain.Channel { return domain.ChannelWABA }
 
-// Capabilities retorna o set suportado.
+// Capabilities declara o que o WhatsApp Cloud API suporta.
 func (a *Adapter) Capabilities() port.CapabilitySet { return WABACapabilities() }
 
-// Send entrega mensagem ou executa ação.
+// Send entrega uma mensagem ou executa uma ação de canal, despachando por
+// req.Action / req.Type (espelha os adapters whatsmeow e tgbot).
 func (a *Adapter) Send(ctx context.Context, req port.OutboundRequest) (string, error) {
 	if req.Action != "" {
 		return a.doAction(ctx, req)
@@ -85,28 +52,45 @@ func (a *Adapter) Send(ctx context.Context, req port.OutboundRequest) (string, e
 	}
 	wamid, err := a.client.SendMessage(ctx, payload)
 	if err != nil {
-		return "", fmt.Errorf("waba: %w", err)
+		return "", fmt.Errorf("enviar mensagem waba: %w", err)
 	}
-	a.log.Info().Str("to", req.PeerID).Str("wamid", wamid).Msg("waba: sent")
+	a.logger.Info().
+		Str("to", req.PeerID).
+		Str("type", string(req.Type)).
+		Str("wamid", wamid).
+		Msg("mensagem enviada")
 	return wamid, nil
 }
 
-// doAction executa ações (reaction, revoke, mark_read).
+// doAction executa ações que não são mensagens novas: reação, revogação e
+// mark-read. Edit e presença/typing não são suportados pela Cloud API.
 func (a *Adapter) doAction(ctx context.Context, req port.OutboundRequest) (string, error) {
 	switch req.Action {
 	case port.ActionReaction:
-		payload := buildReactionPayload(req)
-		return a.client.SendMessage(ctx, payload)
+		payload, err := buildReactionPayload(req)
+		if err != nil {
+			return "", err
+		}
+		wamid, err := a.client.SendMessage(ctx, payload)
+		if err != nil {
+			return "", fmt.Errorf("reação waba: %w", err)
+		}
+		a.logger.Info().Str("to", req.PeerID).Str("action", string(req.Action)).Msg("ação executada")
+		return wamid, nil
 	case port.ActionRevoke:
 		if req.TargetProviderID == "" {
-			return "", fmt.Errorf("waba: revoke sem target_provider_id")
+			return "", fmt.Errorf("revoke sem target_provider_id")
 		}
-		return "", a.client.DeleteMessage(ctx, req.TargetProviderID)
+		if err := a.client.DeleteMessage(ctx, req.TargetProviderID); err != nil {
+			return "", fmt.Errorf("revoke waba: %w", err)
+		}
 	case port.ActionMarkRead:
 		if req.TargetProviderID == "" {
-			return "", fmt.Errorf("waba: mark_read sem target_provider_id")
+			return "", fmt.Errorf("mark_read sem target_provider_id")
 		}
-		return "", a.client.MarkRead(ctx, req.TargetProviderID)
+		if err := a.client.MarkRead(ctx, req.TargetProviderID); err != nil {
+			return "", fmt.Errorf("mark_read waba: %w", err)
+		}
 	case port.ActionEdit:
 		return "", fmt.Errorf("waba: edit não suportado")
 	case port.ActionTyping, port.ActionPresence:
@@ -114,32 +98,109 @@ func (a *Adapter) doAction(ctx context.Context, req port.OutboundRequest) (strin
 	default:
 		return "", fmt.Errorf("waba: ação desconhecida: %q", req.Action)
 	}
+	a.logger.Info().Str("to", req.PeerID).Str("action", string(req.Action)).Msg("ação executada")
+	return "", nil
 }
 
+// --- Saída: pedido canônico → payload da Graph API ---
+
+// buildMessagePayload monta o corpo de POST /messages a partir do pedido
+// canônico (whatsapp-cloud.md §4). Mídia é enviada por link (Metadata["media_url"])
+// ou por id já carregado (Metadata["media_id"]).
 func buildMessagePayload(req port.OutboundRequest) (map[string]any, error) {
 	body := map[string]any{
 		"messaging_product": "whatsapp",
+		"recipient_type":    "individual",
 		"to":                req.PeerID,
-		"type":              string(req.Type),
 	}
+
 	switch req.Type {
-	case domain.MessageTypeText:
-		body["text"] = map[string]any{"body": req.Body}
+	case domain.MessageTypeText, "":
+		body["type"] = "text"
+		body["text"] = map[string]any{"body": req.Body, "preview_url": true}
+	case domain.MessageTypeImage:
+		body["type"] = "image"
+		body["image"] = mediaObject(req, true)
+	case domain.MessageTypeVideo:
+		body["type"] = "video"
+		body["video"] = mediaObject(req, true)
+	case domain.MessageTypeAudio:
+		body["type"] = "audio"
+		body["audio"] = mediaObject(req, false)
+	case domain.MessageTypeDocument:
+		body["type"] = "document"
+		doc := mediaObject(req, true)
+		if fn, ok := req.Metadata["filename"].(string); ok && fn != "" {
+			doc["filename"] = fn
+		}
+		body["document"] = doc
+	case domain.MessageTypeSticker:
+		body["type"] = "sticker"
+		body["sticker"] = mediaObject(req, false)
+	case domain.MessageTypeLocation:
+		body["type"] = "location"
+		body["location"] = locationObject(req.Metadata)
+	case domain.MessageType("contact"):
+		c, ok := req.Metadata["contacts"]
+		if !ok {
+			return nil, fmt.Errorf("contact sem metadata[contacts]")
+		}
+		body["type"] = "contacts"
+		body["contacts"] = c
+	case domain.MessageTypeTemplate:
+		tpl, ok := req.Metadata["template"]
+		if !ok {
+			return nil, fmt.Errorf("template sem metadata[template]")
+		}
+		body["type"] = "template"
+		body["template"] = tpl
 	default:
-		// Para Fase 3, só text é implementado. Mídia é deferida (Phase 4).
-		return nil, fmt.Errorf("waba: type %q não implementado (Phase 4)", req.Type)
+		return nil, fmt.Errorf("tipo não suportado pelo waba: %q", req.Type)
 	}
 	return body, nil
 }
 
-func buildReactionPayload(req port.OutboundRequest) map[string]any {
+// mediaObject monta o objeto de mídia (link ou id). Caption só quando withCaption.
+func mediaObject(req port.OutboundRequest, withCaption bool) map[string]any {
+	obj := map[string]any{}
+	if url, ok := req.Metadata["media_url"].(string); ok && url != "" {
+		obj["link"] = url
+	} else if id, ok := req.Metadata["media_id"].(string); ok && id != "" {
+		obj["id"] = id
+	}
+	if withCaption && req.Body != "" && !strings.HasPrefix(string(req.Type), "sticker") {
+		obj["caption"] = req.Body
+	}
+	return obj
+}
+
+func locationObject(metadata map[string]any) map[string]any {
+	obj := map[string]any{}
+	for _, k := range []string{"latitude", "longitude", "name", "address"} {
+		if v, ok := metadata[k]; ok {
+			obj[k] = v
+		}
+	}
+	return obj
+}
+
+// buildReactionPayload monta o corpo de uma reação (whatsapp-cloud.md §4.7).
+func buildReactionPayload(req port.OutboundRequest) (map[string]any, error) {
+	if req.TargetProviderID == "" {
+		return nil, fmt.Errorf("reação sem target_provider_id")
+	}
+	emoji := req.ReactionEmoji
+	if emoji == "" {
+		emoji = req.Body
+	}
+	if emoji == "" {
+		return nil, fmt.Errorf("reação sem emoji")
+	}
 	return map[string]any{
 		"messaging_product": "whatsapp",
+		"recipient_type":    "individual",
 		"to":                req.PeerID,
 		"type":              "reaction",
-		"reaction": map[string]any{
-			"message_id": req.TargetProviderID,
-			"emoji":      req.ReactionEmoji,
-		},
-	}
+		"reaction":          map[string]any{"message_id": req.TargetProviderID, "emoji": emoji},
+	}, nil
 }

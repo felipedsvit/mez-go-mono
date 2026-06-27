@@ -157,7 +157,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		ucmessaging.WithBus(bus),
 		ucmessaging.WithLogger(log),
 	)
-	routerSvc := ucrouting.NewRouter(log)
+	routerSvc := ucrouting.NewRouter(txRunner, convRepo, log)
 
 	bus.SubscribeInbound(func(evt event.InboundEvent) {
 		log.Debug().
@@ -257,7 +257,8 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	reconciler := ucreconcile.New(
 		inboundEvsRepo,
 		func(ctx context.Context, m domain.Message) error {
-			_, err := routerSvc.Assign(ctx, m)
+			// AutoAssign via ACD (se ligado). Sem ACD, no-op silencioso.
+			_, err := routerSvc.AutoAssign(ctx, m.TenantID, m.ConversationID)
 			return err
 		},
 		ucreconcile.Config{
