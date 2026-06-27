@@ -46,6 +46,12 @@ type Config struct {
 	APIJWTSecret       string `mapstructure:"api_jwt_secret"`
 	ReconcileBatch     int    `mapstructure:"reconcile_batch"`
 	OutboxBatch        int    `mapstructure:"outbox_batch"`
+	// MigrateOnBoot: se true, executa `migrate up` antes de subir o
+	// pipeline (Fase 8 #99 sub-issue). Substitui o entrypoint.sh
+	// (que fazia `migrate up && serve` em 2 processos) por um único
+	// binário que se auto-migra. Default true para dev; em prod
+	// recomenda-se false e rodar migrations em job separado.
+	MigrateOnBoot bool `mapstructure:"migrate_on_boot"`
 	// WSAllowedOrigins: lista (CSV) de origens (scheme://host[:port])
 	// aceitas no WebSocket upgrade. Issue #129 (C1 audit). Vazio
 	// rejeita todas as cross-origin; same-origin passa via Host.
@@ -83,6 +89,7 @@ func Load() (Config, error) {
 	v.SetDefault("session_ttl", "24h")
 	v.SetDefault("reconcile_batch", 100)
 	v.SetDefault("outbox_batch", 32)
+	v.SetDefault("migrate_on_boot", true) // Fase 8 #99 sub-issue
 	v.SetDefault("session_cookie_secure", true) // issue #131 — __Host- exige Secure
 
 	cfg := Config{}

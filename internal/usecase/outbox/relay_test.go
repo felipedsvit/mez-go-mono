@@ -11,7 +11,12 @@ import (
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 	"github.com/felipedsvit/mez-go-mono/internal/core/port"
+	"github.com/felipedsvit/mez-go-mono/internal/testutil"
 )
+
+func TestMain(m *testing.M) {
+	testutil.VerifyTestMain(m)
+}
 
 // fakeOutbox é uma implementação em memória de port.OutboxRelay.
 type fakeOutbox struct {

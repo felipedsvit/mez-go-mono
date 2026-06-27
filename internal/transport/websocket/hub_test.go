@@ -2,6 +2,7 @@ package websocket
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +13,12 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
+	"github.com/felipedsvit/mez-go-mono/internal/testutil"
 )
+
+func TestMain(m *testing.M) {
+	testutil.VerifyTestMain(m)
+}
 
 func TestHub_Broadcast_DropsToSubscribers(t *testing.T) {
 	log := zerolog.Nop()
@@ -26,8 +32,12 @@ func TestHub_Broadcast_DropsToSubscribers(t *testing.T) {
 	// Cria 2 subscribers.
 	s1 := &Subscriber{tenant: "t1", send: make(chan Message, 1), log: log}
 	s2 := &Subscriber{tenant: "t1", send: make(chan Message, 1), log: log}
-	hub.Subscribe("t1", s1)
-	hub.Subscribe("t1", s2)
+	if err := hub.Subscribe("t1", s1); err != nil {
+		t.Fatal(err)
+	}
+	if err := hub.Subscribe("t1", s2); err != nil {
+		t.Fatal(err)
+	}
 
 	hub.Broadcast("t1", Message{Event: "inbound", Channel: "waba"})
 
@@ -48,7 +58,9 @@ func TestHub_Broadcast_Unsubscribe(t *testing.T) {
 	log := zerolog.Nop()
 	hub := NewHub(log)
 	s := &Subscriber{tenant: "t1", send: make(chan Message, 1), log: log}
-	hub.Subscribe("t1", s)
+	if err := hub.Subscribe("t1", s); err != nil {
+		t.Fatal(err)
+	}
 	hub.Unsubscribe("t1", s)
 
 	hub.Broadcast("t1", Message{Event: "ping"})
@@ -63,9 +75,9 @@ func TestHub_Broadcast_Unsubscribe(t *testing.T) {
 func TestHub_Stats(t *testing.T) {
 	log := zerolog.Nop()
 	hub := NewHub(log)
-	hub.Subscribe("t1", &Subscriber{tenant: "t1", send: make(chan Message), log: log})
-	hub.Subscribe("t1", &Subscriber{tenant: "t1", send: make(chan Message), log: log})
-	hub.Subscribe("t2", &Subscriber{tenant: "t2", send: make(chan Message), log: log})
+	_ = hub.Subscribe("t1", &Subscriber{tenant: "t1", send: make(chan Message), log: log})
+	_ = hub.Subscribe("t1", &Subscriber{tenant: "t1", send: make(chan Message), log: log})
+	_ = hub.Subscribe("t2", &Subscriber{tenant: "t2", send: make(chan Message), log: log})
 
 	stats := hub.Stats()
 	if stats["t1"] != 2 {
@@ -80,7 +92,7 @@ func TestHub_OverflowDropsDropSafe(t *testing.T) {
 	log := zerolog.Nop()
 	hub := NewHub(log)
 	s := &Subscriber{tenant: "t1", send: make(chan Message, 1), log: log}
-	hub.Subscribe("t1", s)
+	_ = hub.Subscribe("t1", s)
 
 	// Enfileira 100 mensagens — só 1 cabe no buffer.
 	for i := 0; i < 100; i++ {
@@ -92,6 +104,52 @@ func TestHub_OverflowDropsDropSafe(t *testing.T) {
 		// ok
 	case <-time.After(50 * time.Millisecond):
 		t.Error("subscriber não recebeu primeira mensagem")
+	}
+}
+
+func TestHub_Shutdown_ClosesSubscribers(t *testing.T) {
+	log := zerolog.Nop()
+	hub := NewHub(log)
+	s := &Subscriber{tenant: "t1", send: make(chan Message, 1), log: log}
+	_ = hub.Subscribe("t1", s)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := hub.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	// Subscriber deve estar fechado (canal fechado).
+	if _, ok := <-s.send; ok {
+		t.Error("subscriber channel still open after shutdown")
+	}
+}
+
+func TestHub_Shutdown_Idempotent(t *testing.T) {
+	log := zerolog.Nop()
+	hub := NewHub(log)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := hub.Shutdown(ctx); err != nil {
+		t.Fatalf("first Shutdown: %v", err)
+	}
+	if err := hub.Shutdown(ctx); err != nil {
+		t.Fatalf("second Shutdown should be idempotent, got: %v", err)
+	}
+}
+
+func TestHub_Shutdown_RejectsSubscribe(t *testing.T) {
+	log := zerolog.Nop()
+	hub := NewHub(log)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = hub.Shutdown(ctx)
+
+	err := hub.Subscribe("t1", &Subscriber{tenant: "t1", send: make(chan Message, 1), log: log})
+	if !errors.Is(err, ErrHubClosed) {
+		t.Fatalf("Subscribe after shutdown: want ErrHubClosed, got %v", err)
 	}
 }
 

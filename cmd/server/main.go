@@ -49,6 +49,16 @@ func runServe(cfg config.Config, log zerolog.Logger) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Fase 8 #99 sub-issue: migrate inline antes de subir o pipeline
+	// (default true; em prod pode-se desligar via MEZ_MIGRATE_ON_BOOT=false
+	// e rodar migrations em job separado).
+	if cfg.MigrateOnBoot {
+		log.Info().Msg("serve: running migrations inline (migrate_on_boot=true)")
+		if err := runMigrateInline(ctx, cfg, log); err != nil {
+			log.Fatal().Err(err).Msg("inline migrate failed")
+		}
+	}
+
 	app, err := wireServices(ctx, cfg, log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("wire services")

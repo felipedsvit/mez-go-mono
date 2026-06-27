@@ -14,6 +14,7 @@ require (
 	github.com/oapi-codegen/runtime v1.4.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rs/zerolog v1.35.1
+	github.com/sony/gobreaker/v2 v2.4.0
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.43.0
@@ -91,7 +92,6 @@ require (
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.5 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
-	github.com/sony/gobreaker/v2 v2.4.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
