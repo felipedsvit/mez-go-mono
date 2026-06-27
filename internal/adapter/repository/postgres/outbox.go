@@ -198,7 +198,7 @@ func (r *OutboxRepo) MarkFailed(ctx context.Context, id domain.MessageID, err er
 }
 
 // MarkDLQ move para a dead-letter queue (status='dlq'). Operadores
-// inspecionam para recovery.
+// inspecionam para recovery. Idempotente — se já está em dlq, no-op.
 func (r *OutboxRepo) MarkDLQ(ctx context.Context, id domain.MessageID, lastErr error) error {
 	errMsg := ""
 	if lastErr != nil {
@@ -209,16 +209,28 @@ func (r *OutboxRepo) MarkDLQ(ctx context.Context, id domain.MessageID, lastErr e
 		 SET status = 'dlq',
 		     last_error = $2,
 		     updated_at = NOW()
-		 WHERE payload->>'message_id' = $1 AND status = 'pending'`,
+		 WHERE payload->>'message_id' = $1 AND status IN ('pending', 'failed', 'dlq')`,
 		string(id), errMsg,
 	)
 	if e != nil {
 		return fmt.Errorf("outbox mark dlq: %w", e)
 	}
-	if tag.RowsAffected() == 0 {
-		return port.ErrNotFound
-	}
+	_ = tag // idempotent: 0 rows affected é OK (já em dlq)
 	return nil
+}
+
+// GetAttempts retorna o número de tentativas para o outbox row.
+func (r *OutboxRepo) GetAttempts(ctx context.Context, id domain.MessageID) (int, error) {
+	var attempts int
+	err := r.platformPool.QueryRow(ctx,
+		`SELECT attempts FROM outbound_events
+		 WHERE payload->>'message_id' = $1`,
+		string(id),
+	).Scan(&attempts)
+	if err != nil {
+		return 0, fmt.Errorf("outbox get attempts: %w", err)
+	}
+	return attempts, nil
 }
 
 // ForEachTenant itera todos os tenants ativos. Usado pelo relay e pelo

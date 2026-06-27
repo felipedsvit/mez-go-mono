@@ -48,3 +48,82 @@ func (r *Resolver) Supports(channel domain.Channel, cap Capability) bool {
 	}
 	return caps.Supports(cap)
 }
+
+// CapabilitiesWABA é a matriz oficial WABA (WhatsApp Cloud API):
+// text, media, reactions, delete, templates, mark_read.
+// NÃO tem edit, presence, typing, groups, persistent_menu, calls, payments.
+func CapabilitiesWABA() CapabilitySet {
+	return CapabilitySet{
+		CapText:      true,
+		CapMedia:     true,
+		CapReactions: true,
+		CapDelete:    true,
+		CapTemplates: true,
+		CapMarkRead:  true,
+	}
+}
+
+// CapabilitiesInstagram é a matriz IG: text, media, reactions.
+// NÃO tem edit, delete, presence, typing, groups, persistent_menu.
+func CapabilitiesInstagram() CapabilitySet {
+	return CapabilitySet{
+		CapText:      true,
+		CapMedia:     true,
+		CapReactions: true,
+	}
+}
+
+// CapabilitiesMessenger é a matriz MSG: text, media, reactions, mark_read,
+// typing, groups, persistent_menu, presence(parcial via actions).
+// NÃO tem edit, presence nativa, payments, calls.
+func CapabilitiesMessenger() CapabilitySet {
+	return CapabilitySet{
+		CapText:           true,
+		CapMedia:          true,
+		CapReactions:      true,
+		CapMarkRead:       true,
+		CapTyping:         true,
+		CapGroups:         true,
+		CapPersistentMenu: true,
+	}
+}
+
+// CapabilitiesTelegram é a matriz TG: text, media, reactions, edit, delete,
+// typing, presence, groups, inline_keyboard, forum, payments, gifts, newsletter.
+// Quase tudo que o Bot API permite.
+func CapabilitiesTelegram() CapabilitySet {
+	return CapabilitySet{
+		CapText:           true,
+		CapMedia:          true,
+		CapReactions:      true,
+		CapEdit:           true,
+		CapDelete:         true,
+		CapTyping:         true,
+		CapPresence:       true,
+		CapGroups:         true,
+		CapInlineKeyboard: true,
+		CapForum:          true,
+		CapPayments:       true,
+		CapGifts:          true,
+		CapNewsletter:     true,
+	}
+}
+
+// CapabilitiesWhatsMeow é a matriz informal (Phase 4): tudo que o
+// protocolo permite. Marcado como não-implementado na Fase 3.
+func CapabilitiesWhatsMeow() CapabilitySet {
+	return CapabilitySet{
+		CapText:         true,
+		CapMedia:        true,
+		CapReactions:    true,
+		CapEdit:         true,
+		CapDelete:       true,
+		CapMarkRead:     true,
+		CapTyping:       true,
+		CapPresence:     true,
+		CapGroups:       true,
+		CapCalls:        true,
+		CapDisappearing: true,
+		CapBlocklist:    true,
+	}
+}

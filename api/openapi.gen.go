@@ -4,730 +4,703 @@
 package api
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"strings"
+	"time"
 
+	"github.com/labstack/echo/v4"
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// Defines values for ReadyStatusStatus.
 const (
-	Degraded ReadyStatusStatus = "degraded"
-	Ok       ReadyStatusStatus = "ok"
+	BearerAuthScopes bearerAuthContextKey = "bearerAuth.Scopes"
 )
 
-// Valid indicates whether the value is a known member of the ReadyStatusStatus enum.
-func (e ReadyStatusStatus) Valid() bool {
+// Defines values for ConversationChannel.
+const (
+	ConversationChannelInstagram   ConversationChannel = "instagram"
+	ConversationChannelMessenger   ConversationChannel = "messenger"
+	ConversationChannelTelegramBot ConversationChannel = "telegram_bot"
+	ConversationChannelWaba        ConversationChannel = "waba"
+	ConversationChannelWhatsmeow   ConversationChannel = "whatsmeow"
+)
+
+// Valid indicates whether the value is a known member of the ConversationChannel enum.
+func (e ConversationChannel) Valid() bool {
 	switch e {
-	case Degraded:
+	case ConversationChannelInstagram:
 		return true
-	case Ok:
+	case ConversationChannelMessenger:
+		return true
+	case ConversationChannelTelegramBot:
+		return true
+	case ConversationChannelWaba:
+		return true
+	case ConversationChannelWhatsmeow:
 		return true
 	default:
 		return false
 	}
 }
 
-// Error defines model for Error.
-type Error struct {
-	// Code Machine-readable error code
-	Code string `json:"code"`
+// Defines values for ConversationStatus.
+const (
+	Open     ConversationStatus = "open"
+	Pending  ConversationStatus = "pending"
+	Resolved ConversationStatus = "resolved"
+)
 
-	// Message Human-readable error message
-	Message string `json:"message"`
-}
-
-// ReadyStatus defines model for ReadyStatus.
-type ReadyStatus struct {
-	// Checks Per-dependency status
-	Checks *map[string]string `json:"checks,omitempty"`
-	Status ReadyStatusStatus  `json:"status"`
-}
-
-// ReadyStatusStatus defines model for ReadyStatus.Status.
-type ReadyStatusStatus string
-
-// SetupRequest defines model for SetupRequest.
-type SetupRequest struct {
-	Email           openapi_types.Email `json:"email"`
-	Password        string              `json:"password"`
-	PasswordConfirm string              `json:"password_confirm"`
-}
-
-// PostSetupFormdataRequestBody defines body for PostSetup for application/x-www-form-urlencoded ContentType.
-type PostSetupFormdataRequestBody = SetupRequest
-
-// RequestEditorFn  is the function signature for the RequestEditor callback function
-type RequestEditorFn func(ctx context.Context, req *http.Request) error
-
-// Doer performs HTTP requests.
-//
-// The standard http.Client implements this interface.
-type HttpRequestDoer interface {
-	Do(req *http.Request) (*http.Response, error)
-}
-
-// Client which conforms to the OpenAPI3 specification for this service.
-type Client struct {
-	// The endpoint of the server conforming to this interface, with scheme,
-	// https://api.deepmap.com for example. This can contain a path relative
-	// to the server, such as https://api.deepmap.com/dev-test, and all the
-	// paths in the swagger spec will be appended to the server.
-	Server string
-
-	// Doer for performing requests, typically a *http.Client with any
-	// customized settings, such as certificate chains.
-	Client HttpRequestDoer
-
-	// A list of callbacks for modifying requests which are generated before sending over
-	// the network.
-	RequestEditors []RequestEditorFn
-}
-
-// ClientOption allows setting custom parameters during construction
-type ClientOption func(*Client) error
-
-// Creates a new Client, with reasonable defaults
-func NewClient(server string, opts ...ClientOption) (*Client, error) {
-	// create a client with sane default values
-	client := Client{
-		Server: server,
-	}
-	// mutate client and add all optional params
-	for _, o := range opts {
-		if err := o(&client); err != nil {
-			return nil, err
-		}
-	}
-	// ensure the server URL always has a trailing slash
-	if !strings.HasSuffix(client.Server, "/") {
-		client.Server += "/"
-	}
-	// create httpClient, if not already present
-	if client.Client == nil {
-		client.Client = &http.Client{}
-	}
-	return &client, nil
-}
-
-// WithHTTPClient allows overriding the default Doer, which is
-// automatically created using http.Client. This is useful for tests.
-func WithHTTPClient(doer HttpRequestDoer) ClientOption {
-	return func(c *Client) error {
-		c.Client = doer
-		return nil
+// Valid indicates whether the value is a known member of the ConversationStatus enum.
+func (e ConversationStatus) Valid() bool {
+	switch e {
+	case Open:
+		return true
+	case Pending:
+		return true
+	case Resolved:
+		return true
+	default:
+		return false
 	}
 }
 
-// WithRequestEditorFn allows setting up a callback function, which will be
-// called right before sending the request. This can be used to mutate the request.
-func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
-	return func(c *Client) error {
-		c.RequestEditors = append(c.RequestEditors, fn)
-		return nil
+// Defines values for MessageDirection.
+const (
+	Inbound  MessageDirection = "inbound"
+	Outbound MessageDirection = "outbound"
+)
+
+// Valid indicates whether the value is a known member of the MessageDirection enum.
+func (e MessageDirection) Valid() bool {
+	switch e {
+	case Inbound:
+		return true
+	case Outbound:
+		return true
+	default:
+		return false
 	}
 }
 
-// The interface specification for the client above.
-type ClientInterface interface {
-	// GetHealth request
-	GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+// Defines values for MessageStatus.
+const (
+	Notified MessageStatus = "notified"
+	Received MessageStatus = "received"
+	Routed   MessageStatus = "routed"
+)
 
-	// GetMetrics request
-	GetMetrics(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetReadyz request
-	GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetSetup request
-	GetSetup(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PostSetupWithBody request with any body
-	PostSetupWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	PostSetupWithFormdataBody(ctx context.Context, body PostSetupFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+// Valid indicates whether the value is a known member of the MessageStatus enum.
+func (e MessageStatus) Valid() bool {
+	switch e {
+	case Notified:
+		return true
+	case Received:
+		return true
+	case Routed:
+		return true
+	default:
+		return false
+	}
 }
 
-func (c *Client) GetHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetHealthRequest(c.Server)
+// Defines values for OutboundMessageChannel.
+const (
+	OutboundMessageChannelInstagram   OutboundMessageChannel = "instagram"
+	OutboundMessageChannelMessenger   OutboundMessageChannel = "messenger"
+	OutboundMessageChannelTelegramBot OutboundMessageChannel = "telegram_bot"
+	OutboundMessageChannelWaba        OutboundMessageChannel = "waba"
+	OutboundMessageChannelWhatsmeow   OutboundMessageChannel = "whatsmeow"
+)
+
+// Valid indicates whether the value is a known member of the OutboundMessageChannel enum.
+func (e OutboundMessageChannel) Valid() bool {
+	switch e {
+	case OutboundMessageChannelInstagram:
+		return true
+	case OutboundMessageChannelMessenger:
+		return true
+	case OutboundMessageChannelTelegramBot:
+		return true
+	case OutboundMessageChannelWaba:
+		return true
+	case OutboundMessageChannelWhatsmeow:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OutboundMessageType.
+const (
+	Audio    OutboundMessageType = "audio"
+	Button   OutboundMessageType = "button"
+	Document OutboundMessageType = "document"
+	Image    OutboundMessageType = "image"
+	Location OutboundMessageType = "location"
+	Reaction OutboundMessageType = "reaction"
+	Sticker  OutboundMessageType = "sticker"
+	System   OutboundMessageType = "system"
+	Template OutboundMessageType = "template"
+	Text     OutboundMessageType = "text"
+	Video    OutboundMessageType = "video"
+)
+
+// Valid indicates whether the value is a known member of the OutboundMessageType enum.
+func (e OutboundMessageType) Valid() bool {
+	switch e {
+	case Audio:
+		return true
+	case Button:
+		return true
+	case Document:
+		return true
+	case Image:
+		return true
+	case Location:
+		return true
+	case Reaction:
+		return true
+	case Sticker:
+		return true
+	case System:
+		return true
+	case Template:
+		return true
+	case Text:
+		return true
+	case Video:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ChannelHealthParamsChannel.
+const (
+	Instagram   ChannelHealthParamsChannel = "instagram"
+	Messenger   ChannelHealthParamsChannel = "messenger"
+	TelegramBot ChannelHealthParamsChannel = "telegram_bot"
+	Waba        ChannelHealthParamsChannel = "waba"
+	Whatsmeow   ChannelHealthParamsChannel = "whatsmeow"
+)
+
+// Valid indicates whether the value is a known member of the ChannelHealthParamsChannel enum.
+func (e ChannelHealthParamsChannel) Valid() bool {
+	switch e {
+	case Instagram:
+		return true
+	case Messenger:
+		return true
+	case TelegramBot:
+		return true
+	case Waba:
+		return true
+	case Whatsmeow:
+		return true
+	default:
+		return false
+	}
+}
+
+// ActionAck defines model for ActionAck.
+type ActionAck struct {
+	Action    *string `json:"action,omitempty"`
+	MessageId *string `json:"message_id,omitempty"`
+	Status    *string `json:"status,omitempty"`
+}
+
+// ChannelHealth defines model for ChannelHealth.
+type ChannelHealth struct {
+	Channel *string `json:"channel,omitempty"`
+	Error   *string `json:"error,omitempty"`
+	Phase   *string `json:"phase,omitempty"`
+	Status  *string `json:"status,omitempty"`
+}
+
+// Conversation defines model for Conversation.
+type Conversation struct {
+	AssignedAgent *string              `json:"assigned_agent,omitempty"`
+	Channel       *ConversationChannel `json:"channel,omitempty"`
+	ContactId     *openapi_types.UUID  `json:"contact_id,omitempty"`
+	CreatedAt     *time.Time           `json:"created_at,omitempty"`
+	ExternalId    *string              `json:"external_id,omitempty"`
+	Id            *openapi_types.UUID  `json:"id,omitempty"`
+	Status        *ConversationStatus  `json:"status,omitempty"`
+	TenantId      *openapi_types.UUID  `json:"tenant_id,omitempty"`
+	UpdatedAt     *time.Time           `json:"updated_at,omitempty"`
+}
+
+// ConversationChannel defines model for Conversation.Channel.
+type ConversationChannel string
+
+// ConversationStatus defines model for Conversation.Status.
+type ConversationStatus string
+
+// ConversationList defines model for ConversationList.
+type ConversationList struct {
+	Conversations *[]Conversation `json:"conversations,omitempty"`
+	Total         *int            `json:"total,omitempty"`
+}
+
+// EditRequest defines model for EditRequest.
+type EditRequest struct {
+	Channel          string  `json:"channel"`
+	ContactId        *string `json:"contact_id,omitempty"`
+	ConversationId   *string `json:"conversation_id,omitempty"`
+	NewBody          string  `json:"new_body"`
+	PeerId           string  `json:"peer_id"`
+	TargetProviderId string  `json:"target_provider_id"`
+}
+
+// Message defines model for Message.
+type Message struct {
+	Body           *string                 `json:"body,omitempty"`
+	Channel        *string                 `json:"channel,omitempty"`
+	ContactId      *openapi_types.UUID     `json:"contact_id,omitempty"`
+	ConversationId *openapi_types.UUID     `json:"conversation_id,omitempty"`
+	CreatedAt      *time.Time              `json:"created_at,omitempty"`
+	Direction      *MessageDirection       `json:"direction,omitempty"`
+	Id             *openapi_types.UUID     `json:"id,omitempty"`
+	Metadata       *map[string]interface{} `json:"metadata,omitempty"`
+	ProviderMsgId  *string                 `json:"provider_msg_id,omitempty"`
+	Status         *MessageStatus          `json:"status,omitempty"`
+	TenantId       *openapi_types.UUID     `json:"tenant_id,omitempty"`
+	Type           *string                 `json:"type,omitempty"`
+}
+
+// MessageDirection defines model for Message.Direction.
+type MessageDirection string
+
+// MessageStatus defines model for Message.Status.
+type MessageStatus string
+
+// MessageList defines model for MessageList.
+type MessageList struct {
+	Messages *[]Message `json:"messages,omitempty"`
+	Total    *int       `json:"total,omitempty"`
+}
+
+// MetaWebhookPayload Simplified shape — real payload is much larger
+type MetaWebhookPayload struct {
+	Entry  *[]map[string]interface{} `json:"entry,omitempty"`
+	Object *string                   `json:"object,omitempty"`
+}
+
+// NotImplemented defines model for NotImplemented.
+type NotImplemented struct {
+	Error   *string `json:"error,omitempty"`
+	Message *string `json:"message,omitempty"`
+	Phase   *string `json:"phase,omitempty"`
+}
+
+// OutboundMessage defines model for OutboundMessage.
+type OutboundMessage struct {
+	Body           string                  `json:"body"`
+	Channel        OutboundMessageChannel  `json:"channel"`
+	ContactId      *openapi_types.UUID     `json:"contact_id,omitempty"`
+	ConversationId openapi_types.UUID      `json:"conversation_id"`
+	Metadata       *map[string]interface{} `json:"metadata,omitempty"`
+	PeerId         string                  `json:"peer_id"`
+	Type           OutboundMessageType     `json:"type"`
+}
+
+// OutboundMessageChannel defines model for OutboundMessage.Channel.
+type OutboundMessageChannel string
+
+// OutboundMessageType defines model for OutboundMessage.Type.
+type OutboundMessageType string
+
+// OutboundMessageSent defines model for OutboundMessageSent.
+type OutboundMessageSent struct {
+	Channel   *string             `json:"channel,omitempty"`
+	CreatedAt *time.Time          `json:"created_at,omitempty"`
+	MessageId *openapi_types.UUID `json:"message_id,omitempty"`
+	Status    *string             `json:"status,omitempty"`
+}
+
+// ReactionRequest defines model for ReactionRequest.
+type ReactionRequest struct {
+	Channel          string  `json:"channel"`
+	ContactId        *string `json:"contact_id,omitempty"`
+	ConversationId   *string `json:"conversation_id,omitempty"`
+	Emoji            string  `json:"emoji"`
+	PeerId           string  `json:"peer_id"`
+	TargetProviderId string  `json:"target_provider_id"`
+}
+
+// RevokeRequest defines model for RevokeRequest.
+type RevokeRequest struct {
+	Channel          string  `json:"channel"`
+	ContactId        *string `json:"contact_id,omitempty"`
+	ConversationId   *string `json:"conversation_id,omitempty"`
+	PeerId           string  `json:"peer_id"`
+	TargetProviderId string  `json:"target_provider_id"`
+}
+
+// TelegramUpdate defines model for TelegramUpdate.
+type TelegramUpdate struct {
+	Message  *map[string]interface{} `json:"message,omitempty"`
+	UpdateId *int                    `json:"update_id,omitempty"`
+}
+
+// bearerAuthContextKey is the context key for bearerAuth security scheme
+type bearerAuthContextKey string
+
+// ChannelHealthParamsChannel defines parameters for ChannelHealth.
+type ChannelHealthParamsChannel string
+
+// AssignConversationJSONBody defines parameters for AssignConversation.
+type AssignConversationJSONBody struct {
+	AgentId string `json:"agent_id"`
+}
+
+// ListMessagesParams defines parameters for ListMessages.
+type ListMessagesParams struct {
+	ConversationId openapi_types.UUID `form:"conversation_id" json:"conversation_id"`
+}
+
+// AssignConversationJSONRequestBody defines body for AssignConversation for application/json ContentType.
+type AssignConversationJSONRequestBody AssignConversationJSONBody
+
+// PostMessageJSONRequestBody defines body for PostMessage for application/json ContentType.
+type PostMessageJSONRequestBody = OutboundMessage
+
+// RevokeMessageJSONRequestBody defines body for RevokeMessage for application/json ContentType.
+type RevokeMessageJSONRequestBody = RevokeRequest
+
+// EditMessageJSONRequestBody defines body for EditMessage for application/json ContentType.
+type EditMessageJSONRequestBody = EditRequest
+
+// PostReactionJSONRequestBody defines body for PostReaction for application/json ContentType.
+type PostReactionJSONRequestBody = ReactionRequest
+
+// ReceiveMetaWebhookJSONRequestBody defines body for ReceiveMetaWebhook for application/json ContentType.
+type ReceiveMetaWebhookJSONRequestBody = MetaWebhookPayload
+
+// ReceiveTelegramWebhookJSONRequestBody defines body for ReceiveTelegramWebhook for application/json ContentType.
+type ReceiveTelegramWebhookJSONRequestBody = TelegramUpdate
+
+// ServerInterface represents all server handlers.
+type ServerInterface interface {
+	// Health of a channel (Fase 3 - registry-driven)
+	// (GET /api/channels/{channel}/health)
+	ChannelHealth(ctx echo.Context, channel ChannelHealthParamsChannel) error
+	// List conversations of the current tenant
+	// (GET /api/conversations)
+	ListConversations(ctx echo.Context) error
+	// Assign a conversation to an agent (Fase 2: just sets the field)
+	// (POST /api/conversations/{id}/assign)
+	AssignConversation(ctx echo.Context, id openapi_types.UUID) error
+	// Mark a conversation as resolved
+	// (POST /api/conversations/{id}/resolve)
+	ResolveConversation(ctx echo.Context, id openapi_types.UUID) error
+	// List messages of a conversation
+	// (GET /api/messages)
+	ListMessages(ctx echo.Context, params ListMessagesParams) error
+	// Send a message (Fase 3 — real, queues to outbox)
+	// (POST /api/messages)
+	PostMessage(ctx echo.Context) error
+	// Revoke a sent message (D6: ActionRevoke)
+	// (DELETE /api/messages/{id})
+	RevokeMessage(ctx echo.Context, id openapi_types.UUID) error
+	// Edit a sent message (D6: ActionEdit)
+	// (PATCH /api/messages/{id})
+	EditMessage(ctx echo.Context, id openapi_types.UUID) error
+	// Add a reaction to a message (D6)
+	// (POST /api/messages/{id}/reactions)
+	PostReaction(ctx echo.Context, id openapi_types.UUID) error
+	// Health check
+	// (GET /health)
+	Health(ctx echo.Context) error
+	// Prometheus metrics
+	// (GET /metrics)
+	Metrics(ctx echo.Context) error
+	// Readiness check
+	// (GET /readyz)
+	Readiness(ctx echo.Context) error
+	// Receive a Meta webhook (WABA / Instagram / Messenger)
+	// (POST /webhooks/meta/{app_id})
+	ReceiveMetaWebhook(ctx echo.Context, appId string) error
+	// Receive a Telegram Bot webhook
+	// (POST /webhooks/telegram/{tenant_id})
+	ReceiveTelegramWebhook(ctx echo.Context, tenantId openapi_types.UUID) error
+}
+
+// ServerInterfaceWrapper converts echo contexts to parameters.
+type ServerInterfaceWrapper struct {
+	Handler ServerInterface
+}
+
+// ChannelHealth converts echo context to params.
+func (w *ServerInterfaceWrapper) ChannelHealth(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "channel" -------------
+	var channel ChannelHealthParamsChannel
+
+	err = runtime.BindStyledParameterWithOptions("simple", "channel", ctx.Param("channel"), &channel, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
 	if err != nil {
-		return nil, err
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter channel: %s", err))
 	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
+
+	ctx.Set(string(BearerAuthScopes), []string{})
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.ChannelHealth(ctx, channel)
+	return err
 }
 
-func (c *Client) GetMetrics(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetMetricsRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetReadyzRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) GetSetup(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetSetupRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PostSetupWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSetupRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) PostSetupWithFormdataBody(ctx context.Context, body PostSetupFormdataRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPostSetupRequestWithFormdataBody(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// NewGetHealthRequest generates requests for GetHealth
-func NewGetHealthRequest(server string) (*http.Request, error) {
+// ListConversations converts echo context to params.
+func (w *ServerInterfaceWrapper) ListConversations(ctx echo.Context) error {
 	var err error
 
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
+	ctx.Set(string(BearerAuthScopes), []string{})
 
-	operationPath := fmt.Sprintf("/health")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.ListConversations(ctx)
+	return err
 }
 
-// NewGetMetricsRequest generates requests for GetMetrics
-func NewGetMetricsRequest(server string) (*http.Request, error) {
+// AssignConversation converts echo context to params.
+func (w *ServerInterfaceWrapper) AssignConversation(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+	}
+
+	ctx.Set(string(BearerAuthScopes), []string{})
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.AssignConversation(ctx, id)
+	return err
+}
+
+// ResolveConversation converts echo context to params.
+func (w *ServerInterfaceWrapper) ResolveConversation(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+	}
+
+	ctx.Set(string(BearerAuthScopes), []string{})
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.ResolveConversation(ctx, id)
+	return err
+}
+
+// ListMessages converts echo context to params.
+func (w *ServerInterfaceWrapper) ListMessages(ctx echo.Context) error {
 	var err error
 
-	serverURL, err := url.Parse(server)
+	ctx.Set(string(BearerAuthScopes), []string{})
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMessagesParams
+	// ------------- Required query parameter "conversation_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "conversation_id", ctx.QueryParams(), &params.ConversationId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
 	if err != nil {
-		return nil, err
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter conversation_id: %s", err))
 	}
 
-	operationPath := fmt.Sprintf("/metrics")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.ListMessages(ctx, params)
+	return err
 }
 
-// NewGetReadyzRequest generates requests for GetReadyz
-func NewGetReadyzRequest(server string) (*http.Request, error) {
+// PostMessage converts echo context to params.
+func (w *ServerInterfaceWrapper) PostMessage(ctx echo.Context) error {
 	var err error
 
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
+	ctx.Set(string(BearerAuthScopes), []string{})
 
-	operationPath := fmt.Sprintf("/readyz")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.PostMessage(ctx)
+	return err
 }
 
-// NewGetSetupRequest generates requests for GetSetup
-func NewGetSetupRequest(server string) (*http.Request, error) {
+// RevokeMessage converts echo context to params.
+func (w *ServerInterfaceWrapper) RevokeMessage(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+	}
+
+	ctx.Set(string(BearerAuthScopes), []string{})
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.RevokeMessage(ctx, id)
+	return err
+}
+
+// EditMessage converts echo context to params.
+func (w *ServerInterfaceWrapper) EditMessage(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+	}
+
+	ctx.Set(string(BearerAuthScopes), []string{})
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.EditMessage(ctx, id)
+	return err
+}
+
+// PostReaction converts echo context to params.
+func (w *ServerInterfaceWrapper) PostReaction(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "id" -------------
+	var id openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+	}
+
+	ctx.Set(string(BearerAuthScopes), []string{})
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.PostReaction(ctx, id)
+	return err
+}
+
+// Health converts echo context to params.
+func (w *ServerInterfaceWrapper) Health(ctx echo.Context) error {
 	var err error
 
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/setup")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.Health(ctx)
+	return err
 }
 
-// NewPostSetupRequestWithFormdataBody calls the generic PostSetup builder with application/x-www-form-urlencoded body
-func NewPostSetupRequestWithFormdataBody(server string, body PostSetupFormdataRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	bodyStr, err := runtime.MarshalForm(body, nil)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = strings.NewReader(bodyStr.Encode())
-	return NewPostSetupRequestWithBody(server, "application/x-www-form-urlencoded", bodyReader)
-}
-
-// NewPostSetupRequestWithBody generates requests for PostSetup with any type of body
-func NewPostSetupRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+// Metrics converts echo context to params.
+func (w *ServerInterfaceWrapper) Metrics(ctx echo.Context) error {
 	var err error
 
-	serverURL, err := url.Parse(server)
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.Metrics(ctx)
+	return err
+}
+
+// Readiness converts echo context to params.
+func (w *ServerInterfaceWrapper) Readiness(ctx echo.Context) error {
+	var err error
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.Readiness(ctx)
+	return err
+}
+
+// ReceiveMetaWebhook converts echo context to params.
+func (w *ServerInterfaceWrapper) ReceiveMetaWebhook(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "app_id" -------------
+	var appId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "app_id", ctx.Param("app_id"), &appId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
 	if err != nil {
-		return nil, err
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter app_id: %s", err))
 	}
 
-	operationPath := fmt.Sprintf("/setup")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.ReceiveMetaWebhook(ctx, appId)
+	return err
+}
 
-	queryURL, err := serverURL.Parse(operationPath)
+// ReceiveTelegramWebhook converts echo context to params.
+func (w *ServerInterfaceWrapper) ReceiveTelegramWebhook(ctx echo.Context) error {
+	var err error
+	// ------------- Path parameter "tenant_id" -------------
+	var tenantId openapi_types.UUID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "tenant_id", ctx.Param("tenant_id"), &tenantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		return nil, err
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter tenant_id: %s", err))
 	}
 
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.ReceiveTelegramWebhook(ctx, tenantId)
+	return err
 }
 
-func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
-	for _, r := range c.RequestEditors {
-		if err := r(ctx, req); err != nil {
-			return err
-		}
-	}
-	for _, r := range additionalEditors {
-		if err := r(ctx, req); err != nil {
-			return err
-		}
-	}
-	return nil
+// This is a simple interface which specifies echo.Route addition functions which
+// are present on both echo.Echo and echo.Group, since we want to allow using
+// either of them for path registration
+type EchoRouter interface {
+	CONNECT(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
+	DELETE(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
+	GET(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
+	HEAD(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
+	OPTIONS(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
+	PATCH(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
+	POST(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
+	PUT(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
+	TRACE(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
 }
 
-// ClientWithResponses builds on ClientInterface to offer response payloads
-type ClientWithResponses struct {
-	ClientInterface
+// RegisterHandlersOptions configures RegisterHandlersWithOptions.
+type RegisterHandlersOptions struct {
+	// BaseURL is prepended to every registered path so the API can be served
+	// under a prefix.
+	BaseURL string
+	// OperationMiddlewares lets the caller attach per-operation middleware at
+	// registration time. The map key is the OpenAPI `operationId` value as it
+	// appears in the spec (the raw, un-normalized form). Operations that have
+	// no entry are registered with no extra middleware. A nil map disables
+	// per-operation middleware entirely.
+	OperationMiddlewares map[string][]echo.MiddlewareFunc
 }
 
-// NewClientWithResponses creates a new ClientWithResponses, which wraps
-// Client with return type handling
-func NewClientWithResponses(server string, opts ...ClientOption) (*ClientWithResponses, error) {
-	client, err := NewClient(server, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return &ClientWithResponses{client}, nil
+// RegisterHandlers adds each server route to the EchoRouter.
+func RegisterHandlers(router EchoRouter, si ServerInterface) {
+	RegisterHandlersWithOptions(router, si, RegisterHandlersOptions{})
 }
 
-// WithBaseURL overrides the baseURL.
-func WithBaseURL(baseURL string) ClientOption {
-	return func(c *Client) error {
-		newBaseURL, err := url.Parse(baseURL)
-		if err != nil {
-			return err
-		}
-		c.Server = newBaseURL.String()
-		return nil
-	}
+// RegisterHandlersWithBaseURL registers handlers and prepends BaseURL to the
+// paths so the API can be served under a prefix.
+func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL string) {
+	RegisterHandlersWithOptions(router, si, RegisterHandlersOptions{BaseURL: baseURL})
 }
 
-// ClientWithResponsesInterface is the interface specification for the client with responses above.
-type ClientWithResponsesInterface interface {
-	// GetHealthWithResponse request
-	GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error)
+// RegisterHandlersWithOptions registers handlers using the supplied options,
+// including any per-operation middleware.
+func RegisterHandlersWithOptions(router EchoRouter, si ServerInterface, options RegisterHandlersOptions) {
 
-	// GetMetricsWithResponse request
-	GetMetricsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMetricsResponse, error)
-
-	// GetReadyzWithResponse request
-	GetReadyzWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadyzResponse, error)
-
-	// GetSetupWithResponse request
-	GetSetupWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetSetupResponse, error)
-
-	// PostSetupWithBodyWithResponse request with any body
-	PostSetupWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSetupResponse, error)
-
-	PostSetupWithFormdataBodyWithResponse(ctx context.Context, body PostSetupFormdataRequestBody, reqEditors ...RequestEditorFn) (*PostSetupResponse, error)
-}
-
-type GetHealthResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r GetHealthResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetHealthResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetHealthResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetMetricsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r GetMetricsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetMetricsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetMetricsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetReadyzResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *ReadyStatus
-	JSON503      *Error
-}
-
-// Status returns HTTPResponse.Status
-func (r GetReadyzResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetReadyzResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetReadyzResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetSetupResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r GetSetupResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetSetupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetSetupResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type PostSetupResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-}
-
-// Status returns HTTPResponse.Status
-func (r PostSetupResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PostSetupResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r PostSetupResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-// GetHealthWithResponse request returning *GetHealthResponse
-func (c *ClientWithResponses) GetHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthResponse, error) {
-	rsp, err := c.GetHealth(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetHealthResponse(rsp)
-}
-
-// GetMetricsWithResponse request returning *GetMetricsResponse
-func (c *ClientWithResponses) GetMetricsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMetricsResponse, error) {
-	rsp, err := c.GetMetrics(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetMetricsResponse(rsp)
-}
-
-// GetReadyzWithResponse request returning *GetReadyzResponse
-func (c *ClientWithResponses) GetReadyzWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadyzResponse, error) {
-	rsp, err := c.GetReadyz(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetReadyzResponse(rsp)
-}
-
-// GetSetupWithResponse request returning *GetSetupResponse
-func (c *ClientWithResponses) GetSetupWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetSetupResponse, error) {
-	rsp, err := c.GetSetup(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetSetupResponse(rsp)
-}
-
-// PostSetupWithBodyWithResponse request with arbitrary body returning *PostSetupResponse
-func (c *ClientWithResponses) PostSetupWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PostSetupResponse, error) {
-	rsp, err := c.PostSetupWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostSetupResponse(rsp)
-}
-
-func (c *ClientWithResponses) PostSetupWithFormdataBodyWithResponse(ctx context.Context, body PostSetupFormdataRequestBody, reqEditors ...RequestEditorFn) (*PostSetupResponse, error) {
-	rsp, err := c.PostSetupWithFormdataBody(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePostSetupResponse(rsp)
-}
-
-// ParseGetHealthResponse parses an HTTP response from a GetHealthWithResponse call
-func ParseGetHealthResponse(rsp *http.Response) (*GetHealthResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
+	wrapper := ServerInterfaceWrapper{
+		Handler: si,
 	}
 
-	response := &GetHealthResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
+	router.GET(options.BaseURL+"/api/channels/:channel/health", wrapper.ChannelHealth, options.OperationMiddlewares["channelHealth"]...)
+	router.GET(options.BaseURL+"/api/conversations", wrapper.ListConversations, options.OperationMiddlewares["listConversations"]...)
+	router.POST(options.BaseURL+"/api/conversations/:id/assign", wrapper.AssignConversation, options.OperationMiddlewares["assignConversation"]...)
+	router.POST(options.BaseURL+"/api/conversations/:id/resolve", wrapper.ResolveConversation, options.OperationMiddlewares["resolveConversation"]...)
+	router.GET(options.BaseURL+"/api/messages", wrapper.ListMessages, options.OperationMiddlewares["listMessages"]...)
+	router.POST(options.BaseURL+"/api/messages", wrapper.PostMessage, options.OperationMiddlewares["postMessage"]...)
+	router.DELETE(options.BaseURL+"/api/messages/:id", wrapper.RevokeMessage, options.OperationMiddlewares["revokeMessage"]...)
+	router.PATCH(options.BaseURL+"/api/messages/:id", wrapper.EditMessage, options.OperationMiddlewares["editMessage"]...)
+	router.POST(options.BaseURL+"/api/messages/:id/reactions", wrapper.PostReaction, options.OperationMiddlewares["postReaction"]...)
+	router.GET(options.BaseURL+"/health", wrapper.Health, options.OperationMiddlewares["health"]...)
+	router.GET(options.BaseURL+"/metrics", wrapper.Metrics, options.OperationMiddlewares["metrics"]...)
+	router.GET(options.BaseURL+"/readyz", wrapper.Readiness, options.OperationMiddlewares["readiness"]...)
+	router.POST(options.BaseURL+"/webhooks/meta/:app_id", wrapper.ReceiveMetaWebhook, options.OperationMiddlewares["receiveMetaWebhook"]...)
+	router.POST(options.BaseURL+"/webhooks/telegram/:tenant_id", wrapper.ReceiveTelegramWebhook, options.OperationMiddlewares["receiveTelegramWebhook"]...)
 
-	return response, nil
-}
-
-// ParseGetMetricsResponse parses an HTTP response from a GetMetricsWithResponse call
-func ParseGetMetricsResponse(rsp *http.Response) (*GetMetricsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetMetricsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	return response, nil
-}
-
-// ParseGetReadyzResponse parses an HTTP response from a GetReadyzWithResponse call
-func ParseGetReadyzResponse(rsp *http.Response) (*GetReadyzResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetReadyzResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ReadyStatus
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Error
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetSetupResponse parses an HTTP response from a GetSetupWithResponse call
-func ParseGetSetupResponse(rsp *http.Response) (*GetSetupResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetSetupResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	return response, nil
-}
-
-// ParsePostSetupResponse parses an HTTP response from a PostSetupWithResponse call
-func ParsePostSetupResponse(rsp *http.Response) (*PostSetupResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PostSetupResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	return response, nil
 }

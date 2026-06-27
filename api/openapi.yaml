@@ -1,8 +1,8 @@
 openapi: "3.1.0"
 info:
   title: Mez Go Mono API
-  description: Omnichannel Messaging Gateway API (Phase 2 — Inbound Pipeline)
-  version: "0.2.0"
+  description: Omnichannel Messaging Gateway API (Phase 3 — Outbound Pipeline)
+  version: "0.3.0"
 servers:
   - url: /
 security:
@@ -107,7 +107,7 @@ paths:
 
   /api/conversations/{id}/assign:
     post:
-      summary: Assign a conversation to an agent (Fase 2: just sets the field)
+      summary: "Assign a conversation to an agent (Fase 2: just sets the field)"
       operationId: assignConversation
       parameters:
         - name: id
@@ -166,7 +166,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/MessageList"
     post:
-      summary: Send a message (Fase 2: NOT IMPLEMENTED — returns 501)
+      summary: Send a message (Fase 3 — real, queues to outbox)
       operationId: postMessage
       requestBody:
         required: true
@@ -175,16 +175,95 @@ paths:
             schema:
               $ref: "#/components/schemas/OutboundMessage"
       responses:
+        "200":
+          description: Message accepted and queued for delivery
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutboundMessageSent"
         "501":
-          description: Not implemented (Fase 3)
+          description: Channel not implemented (e.g. whatsmeow)
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/NotImplemented"
 
+  /api/messages/{id}/reactions:
+    post:
+      summary: Add a reaction to a message (D6)
+      operationId: postReaction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReactionRequest"
+      responses:
+        "200":
+          description: Reaction queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionAck"
+
+  /api/messages/{id}:
+    patch:
+      summary: "Edit a sent message (D6: ActionEdit)"
+      operationId: editMessage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditRequest"
+      responses:
+        "200":
+          description: Edit queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionAck"
+    delete:
+      summary: "Revoke a sent message (D6: ActionRevoke)"
+      operationId: revokeMessage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevokeRequest"
+      responses:
+        "200":
+          description: Revoke queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActionAck"
+
   /api/channels/{channel}/health:
     get:
-      summary: Health of a channel
+      summary: "Health of a channel (Fase 3 - registry-driven)"
       operationId: channelHealth
       parameters:
         - name: channel
@@ -192,6 +271,7 @@ paths:
           required: true
           schema:
             type: string
+            enum: [waba, whatsmeow, instagram, messenger, telegram_bot]
       responses:
         "200":
           description: Channel health
@@ -199,6 +279,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChannelHealth"
+        "404":
+          description: Channel not registered
 
 components:
   securitySchemes:
@@ -295,11 +377,19 @@ components:
 
     OutboundMessage:
       type: object
-      required: [conversation_id, type, body]
+      required: [conversation_id, channel, peer_id, type, body]
       properties:
         conversation_id:
           type: string
           format: uuid
+        channel:
+          type: string
+          enum: [waba, whatsmeow, instagram, messenger, telegram_bot]
+        contact_id:
+          type: string
+          format: uuid
+        peer_id:
+          type: string
         type:
           type: string
           enum: [text, image, audio, video, document, sticker, location, button, template, reaction, system]
@@ -307,6 +397,79 @@ components:
           type: string
         metadata:
           type: object
+
+    OutboundMessageSent:
+      type: object
+      properties:
+        message_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        channel:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    ReactionRequest:
+      type: object
+      required: [channel, peer_id, target_provider_id, emoji]
+      properties:
+        channel:
+          type: string
+        peer_id:
+          type: string
+        conversation_id:
+          type: string
+        contact_id:
+          type: string
+        target_provider_id:
+          type: string
+        emoji:
+          type: string
+
+    EditRequest:
+      type: object
+      required: [channel, peer_id, target_provider_id, new_body]
+      properties:
+        channel:
+          type: string
+        peer_id:
+          type: string
+        conversation_id:
+          type: string
+        contact_id:
+          type: string
+        target_provider_id:
+          type: string
+        new_body:
+          type: string
+
+    RevokeRequest:
+      type: object
+      required: [channel, peer_id, target_provider_id]
+      properties:
+        channel:
+          type: string
+        peer_id:
+          type: string
+        conversation_id:
+          type: string
+        contact_id:
+          type: string
+        target_provider_id:
+          type: string
+
+    ActionAck:
+      type: object
+      properties:
+        message_id:
+          type: string
+        action:
+          type: string
+        status:
+          type: string
 
     NotImplemented:
       type: object
@@ -318,7 +481,7 @@ components:
           type: string
         phase:
           type: string
-          example: fase3
+          example: fase4
 
     ChannelHealth:
       type: object
@@ -327,9 +490,9 @@ components:
           type: string
         status:
           type: string
-        phase:
+        error:
           type: string
-        note:
+        phase:
           type: string
 
     MetaWebhookPayload:
