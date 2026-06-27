@@ -1,70 +1,58 @@
+// Package adminweb — handlers_tenants.go: handlers /admin/tenants/*.
 package adminweb
 
 import (
 	"net/http"
-	"time"
 
 	cdomain "github.com/felipedsvit/mez-go-mono/internal/core/admin"
 	ucadmin "github.com/felipedsvit/mez-go-mono/internal/usecase/admin"
+	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/templates"
 )
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	principal := principalOrEmpty(r)
-	data := PageData{
-		Title:     "Dashboard",
-		Principal: principal,
-		Now:       time.Now(),
-	}
-	s.renderPage(w, "dashboard.html", data)
+	p := s.basePageData(r)
+	p.Title = "Dashboard"
+	s.renderTempl(w, templates.Dashboard(p))
 }
 
 func (s *Server) handleTenantsList(w http.ResponseWriter, r *http.Request) {
-	principal := principalOrEmpty(r)
+	p := s.basePageData(r)
+	p.Title = "Tenants"
 	tenants, err := s.tenants.List(r.Context(), cdomain.TenantFilter{})
 	if err != nil {
-		s.renderPage(w, "tenants.html", PageData{Title: "Tenants", Error: "Error loading tenants", Now: time.Now(), Principal: principal})
+		p.Error = "Error loading tenants"
+		s.renderTempl(w, templates.Tenants(templates.TenantsData{Page: p, Tenants: nil}))
 		return
 	}
-
-	data := PageData{
-		Title:     "Tenants",
-		Principal: principal,
-		Data:      tenants,
-		Now:       time.Now(),
+	rows := make([]cdomain.Tenant, len(tenants))
+	for i, t := range tenants {
+		rows[i] = t
 	}
-	s.renderPage(w, "tenants.html", data)
+	s.renderTempl(w, templates.Tenants(templates.TenantsData{Page: p, Tenants: rows}))
 }
 
 func (s *Server) handleTenantNew(w http.ResponseWriter, r *http.Request) {
-	principal := principalOrEmpty(r)
-	data := PageData{
-		Title:     "New Tenant",
-		Principal: principal,
-		Now:       time.Now(),
-	}
-	s.renderPage(w, "tenant_new.html", data)
+	p := s.basePageData(r)
+	p.Title = "New Tenant"
+	s.renderTempl(w, templates.TenantNew(templates.TenantNewData{Page: p}))
 }
 
 func (s *Server) handleTenantCreate(w http.ResponseWriter, r *http.Request) {
-	principal := principalOrEmpty(r)
+	p := s.basePageData(r)
+	p.Title = "New Tenant"
 	name := s.formValue(r, "name")
 	slug := s.formValue(r, "slug")
 
 	actor := ucadmin.Actor{
-		ID:    principal.UserID,
-		Email: principal.Email,
+		ID:    p.Principal.UserID,
+		Email: p.Principal.Email,
 		IP:    r.RemoteAddr,
 	}
 
 	_, err := s.tenants.Provision(r.Context(), name, slug, actor)
 	if err != nil {
-		data := PageData{
-			Title:     "New Tenant",
-			Error:     err.Error(),
-			Principal: principal,
-			Now:       time.Now(),
-		}
-		s.renderPage(w, "tenant_new.html", data)
+		p.Error = err.Error()
+		s.renderTempl(w, templates.TenantNew(templates.TenantNewData{Page: p}))
 		return
 	}
 
@@ -72,13 +60,13 @@ func (s *Server) handleTenantCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTenantStatus(w http.ResponseWriter, r *http.Request) {
-	principal := principalOrEmpty(r)
+	p := s.basePageData(r)
 	id := r.PathValue("id")
 	status := cdomain.TenantStatus(r.FormValue("status"))
 
 	actor := ucadmin.Actor{
-		ID:    principal.UserID,
-		Email: principal.Email,
+		ID:    p.Principal.UserID,
+		Email: p.Principal.Email,
 		IP:    r.RemoteAddr,
 	}
 

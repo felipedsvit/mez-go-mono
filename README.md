@@ -982,7 +982,7 @@ riscos já mapeados.
 - Bus in-process tipado + política de saturação (~400-600).
 - **Reconciler inbound** (C1) (~300-500). *Novo nesta revisão.*
 - `cmd/server` único: serve + migrate + setup + rotate-kek + wiring Fx (~400-500).
-- Rewrite `templ` + re-cabeamento htmx/WS (~1.500-2.000).
+- Rewrite `templ` + re-cabeamento htmx/WS (~1.500-2.000). *Executado em jun/2026 (issue #109–#116): mono usava `html/template`; alinhamento forçado por §15/D13. Componentes tipados, zero funcmap, `html/template` removido de `adminweb/`.*
 - Backup/restore/reset lógico com FK deferida + replay de migration (~1.000-1.500). *Único bloco
   sem precedente no pai; ampliado por C6/C7.*
 - `FORCE RLS` + `RunAsPlatform` + teste de regressão fail-closed (~200-400). *Novo (C3/C5).*
@@ -1048,6 +1048,23 @@ riscos já mapeados.
 - WS real-time na inbox; CSRF middleware.
 - **Re-cabeamento htmx/WS sobre os templates reescritos.**
 
+### Fase 2b — Migração `html/template` → `templ` (10-14 dias) ✅ (jun/2026)
+
+Fora do roadmap original — identificado em revisão posterior (Fase 8): o mono usava
+`html/template` em `adminweb/`, divergindo do que este README §15/D13 afirmava. Decidido
+alinhar (issues #109–#116).
+
+- Adicionar `github.com/a-h/templ` (issue #109).
+- Layout tipado (`BaseLayout`, `Layout`, `Header`, `Footer`, `NavBar`, `ErrorBanner`, `CSRFInput`) (issue #110).
+- Converter 14 templates `.html` → components `.templ` com props tipadas (issue #111).
+- Substituir 6 `stubRenderer`/interface `Renderer` por components reais (issue #112).
+- Portar 8 templates do pai (`inbox`, `thread`, `fragments`, `error`, `tenant_detail`, `user_detail`, `role_new`, `health`) (issue #113).
+- Remover `html/template` + `embed.FS` + `render/` (issue #114).
+- Snapshot tests para cada component (`templates/snapshot_test.go`) (issue #115).
+- Atualizar 000_FIXES.md §2 + README §22/§23 (issue #116).
+
+Total realocado: **+10-14 dias** sobre o baseline 35-50 do roadmap.
+
 ### Fase 6 — Backup/Restore/Reset (5-7 dias) *(realocado de 2-3)*
 
 - Export lógico (COPY-por-tenant, tx `REPEATABLE READ`, stream S3).
@@ -1078,10 +1095,14 @@ testcontainers em `tests/secrets/`.
 | Estimativa | Dias úteis | Semanas (solo) |
 |------------|:----------:|:--------------:|
 | Plano original | 23-32 | 5-6 |
-| **Revisado** | **35-50** | **7-10** |
+| **Revisado (Fases 0-8)** | **35-50** | **7-10** |
+| **+ Fase 2b (templ migration, jun/2026)** | **+10-14** | **+2-3** |
+| **Total acumulado** | **45-64** | **9-13** |
 
-Maior incerteza: **Fase 4 (whatsmeow)** e **Fase 6 (backup)**, os dois blocos com mais
-reescrita e menos precedente direto no pai.
+Maior incerteza original: **Fase 4 (whatsmeow)** e **Fase 6 (backup)**, os dois blocos com mais
+reescrita e menos precedente direto no pai. **Fase 2b (templ)** é trabalho genuíno (o pai
+também usa `html/template`), e seu custo foi subestimado no plano original — README §22 já
+listava a estimativa de 1.500-2.000 LOC para a rewrite, mas não a duração em dias.
 
 ---
 

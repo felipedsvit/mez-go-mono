@@ -1,0 +1,137 @@
+package templates
+
+import "time"
+
+// BackupJobView é um view-model simplificado do backup job para a
+// página de status (substitui map[string]any).
+type BackupJobView struct {
+	ID        string
+	State     string
+	Tables    []string
+	Bytes     int64
+	StartedAt time.Time
+	EndedAt   time.Time
+	BackupID  string
+	Error     string
+}
+
+// BackupData é a prop para /admin/tenants/{id}/backup.
+type BackupData struct {
+	Page    PageData
+	TenantID string
+	Backups []BackupJobView
+	Job     *BackupJobView // opcional: status de um job em andamento
+}
+
+templ Backup(d BackupData) {
+	@Layout("Backup — " + d.TenantID, d.Page) {
+		<h1>Backup</h1>
+		<p class="muted">Tenant: <code>{ d.TenantID }</code></p>
+		if d.Job != nil {
+			@BackupStatusFragment(*d.Job, d.Page.CSRFToken)
+		}
+		<div class="card">
+			<h2>Start new backup</h2>
+			<form method="POST" action={ templ.SafeURL("/admin/tenants/" + d.TenantID + "/backup") }>
+				@CSRFInput(d.Page.CSRFToken)
+				<button type="submit" class="btn btn-primary">Start Backup</button>
+			</form>
+		</div>
+		if len(d.Backups) > 0 {
+			<div class="card">
+				<h2>Existing Backups</h2>
+				@BackupList(BackupListData{Page: d.Page, TenantID: d.TenantID, Backups: d.Backups})
+			</div>
+		}
+	}
+}
+
+// BackupListData é a prop para a lista de backups.
+type BackupListData struct {
+	Page     PageData
+	TenantID string
+	Backups  []BackupJobView
+}
+
+templ BackupList(d BackupListData) {
+	if len(d.Backups) == 0 {
+		<p><em>No backups yet.</em></p>
+	} else {
+		<table>
+			<thead>
+				<tr>
+					<th>Backup ID</th>
+					<th>Created</th>
+					<th>Size</th>
+					<th>Actions</th>
+				</tr>
+			</thead>
+			<tbody>
+				for _, b := range d.Backups {
+					<tr>
+						<td><code>{ b.ID }</code></td>
+						<td>{ FormatDate(b.StartedAt, "2006-01-02 15:04:05") }</td>
+						<td>{ formatBytes(b.Bytes) }</td>
+						<td>
+							<form method="POST" action={ templ.SafeURL("/admin/tenants/" + d.TenantID + "/restore") } style="display:inline">
+								@CSRFInput(d.Page.CSRFToken)
+								<input type="hidden" name="backup_id" value={ b.ID }/>
+								<button type="submit" class="btn btn-sm btn-secondary" hx-confirm="Restore this backup? Current data will be replaced.">Restore</button>
+							</form>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	}
+}
+
+// BackupStatusFragment é o fragmento htmx que faz polling de status.
+// Renderizado standalone (sem Layout) em /admin/tenants/{id}/backup/status.
+templ BackupStatusFragment(job BackupJobView, csrfToken string) {
+	<div class="card backup-status"
+	     hx-get="/admin/tenants/{ job.ID }/backup/status?job_id={ job.ID }"
+	     hx-trigger="every 2s"
+	     hx-swap="outerHTML">
+		<h3>Job { job.ID }</h3>
+		<p>State: <strong>{ job.State }</strong></p>
+		if job.Error != "" {
+			<div class="alert alert-error">{ job.Error }</div>
+		}
+		@CSRFInput(csrfToken)
+	</div>
+}
+
+func formatBytes(n int64) string {
+	const k = 1024
+	if n < k {
+		return formatInt(n) + " B"
+	}
+	if n < k*k {
+		return formatInt(n/k) + " KB"
+	}
+	if n < k*k*k {
+		return formatInt(n/(k*k)) + " MB"
+	}
+	return formatInt(n/(k*k*k)) + " GB"
+}
+
+func formatInt(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	// Constrói o número manualmente para evitar importar strconv aqui.
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	digits := []byte{}
+	for n > 0 {
+		digits = append([]byte{byte('0' + n%10)}, digits...)
+		n /= 10
+	}
+	if neg {
+		return "-" + string(digits)
+	}
+	return string(digits)
+}

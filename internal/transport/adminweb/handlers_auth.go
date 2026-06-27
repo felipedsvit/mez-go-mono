@@ -1,3 +1,4 @@
+// Package adminweb — handlers_auth.go: handlers de login/logout e OIDC.
 package adminweb
 
 import (
@@ -7,6 +8,7 @@ import (
 	cdomain "github.com/felipedsvit/mez-go-mono/internal/core/admin"
 	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/middleware"
 	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/middleware/ratelimit"
+	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/templates"
 	"github.com/felipedsvit/mez-go-mono/internal/usecase/auth"
 )
 
@@ -17,35 +19,29 @@ func (s *Server) handleLoginGET(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read the CSRF cookie set by the CSRF middleware on this GET; the
-	// template embeds it as a hidden field so the POST can validate.
-	csrfToken := ""
-	if c, err := r.Cookie("XSRF-TOKEN"); err == nil {
-		csrfToken = c.Value
-	}
-
-	data := PageData{
+	p := PageData{
 		Title:     "Login",
 		Now:       time.Now(),
-		CSRFToken: csrfToken,
+		CSRFToken: csrfTokenFromContext(r),
 	}
-	s.renderPage(w, "login.html", data)
+	s.renderTempl(w, templates.Login(p, s.idp != nil))
 }
 
 func (s *Server) handleLoginPOST(w http.ResponseWriter, r *http.Request) {
-	// Rate limit by client IP. Defense-in-depth with the per-email lockout
-	// in usecase/auth/lockout: this one stops HTTP-level bursts before they
-	// reach the password store.
+	// Rate limit por IP. Defesa em profundidade com o lockout per-email
+	// do usecase/auth/lockout: este para bursts no nível HTTP antes de
+	// chegarem à verificação de senha.
 	if s.loginLimiter != nil {
 		key := ratelimit.ClientIP(r)
 		if !s.loginLimiter.Allow(key) {
 			w.Header().Set("Retry-After", "1")
-			data := PageData{
-				Title: "Login",
-				Error: "Too many login attempts. Please try again in a minute.",
-				Now:   time.Now(),
+			p := PageData{
+				Title:     "Login",
+				Error:     "Too many login attempts. Please try again in a minute.",
+				Now:       time.Now(),
+				CSRFToken: csrfTokenFromContext(r),
 			}
-			s.renderPage(w, "login.html", data)
+			s.renderTempl(w, templates.Login(p, s.idp != nil))
 			return
 		}
 	}
@@ -60,8 +56,8 @@ func (s *Server) handleLoginPOST(w http.ResponseWriter, r *http.Request) {
 		UserAgent: r.UserAgent(),
 	})
 	if err != nil {
-		// Map each sentinel error to a user-facing message. Never reveal
-		// whether the email exists (user enumeration guardrail).
+		// Mapeia cada sentinel para uma mensagem user-facing. Nunca revela
+		// se o email existe (user-enumeration guardrail).
 		msg := "Invalid email or password"
 		switch err {
 		case cdomain.ErrTooManyAttempts:
@@ -69,12 +65,13 @@ func (s *Server) handleLoginPOST(w http.ResponseWriter, r *http.Request) {
 		case cdomain.ErrUserDisabled:
 			msg = "Account disabled. Contact the administrator."
 		}
-		data := PageData{
-			Title: "Login",
-			Error: msg,
-			Now:   time.Now(),
+		p := PageData{
+			Title:     "Login",
+			Error:     msg,
+			Now:       time.Now(),
+			CSRFToken: csrfTokenFromContext(r),
 		}
-		s.renderPage(w, "login.html", data)
+		s.renderTempl(w, templates.Login(p, s.idp != nil))
 		return
 	}
 
@@ -110,8 +107,8 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 	authURL, _, err := s.login.StartOIDC(r.Context(), r.URL.Query().Get("next"))
 	if err != nil {
-		data := PageData{Title: "Login", Error: "OIDC not available", Now: time.Now()}
-		s.renderPage(w, "login.html", data)
+		p := PageData{Title: "Login", Error: "OIDC not available", Now: time.Now(), CSRFToken: csrfTokenFromContext(r)}
+		s.renderTempl(w, templates.Login(p, s.idp != nil))
 		return
 	}
 	s.redirect(w, r, authURL)
@@ -120,29 +117,29 @@ func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		data := PageData{Title: "Login", Error: "Missing authorization code", Now: time.Now()}
-		s.renderPage(w, "login.html", data)
+		p := PageData{Title: "Login", Error: "Missing authorization code", Now: time.Now(), CSRFToken: csrfTokenFromContext(r)}
+		s.renderTempl(w, templates.Login(p, s.idp != nil))
 		return
 	}
 
 	state := r.URL.Query().Get("state")
 	if state == "" {
-		data := PageData{Title: "Login", Error: "Missing state", Now: time.Now()}
-		s.renderPage(w, "login.html", data)
+		p := PageData{Title: "Login", Error: "Missing state", Now: time.Now(), CSRFToken: csrfTokenFromContext(r)}
+		s.renderTempl(w, templates.Login(p, s.idp != nil))
 		return
 	}
 
 	oidcState, err := s.stateStore.LoadState(r.Context(), state)
 	if err != nil {
-		data := PageData{Title: "Login", Error: "Invalid state", Now: time.Now()}
-		s.renderPage(w, "login.html", data)
+		p := PageData{Title: "Login", Error: "Invalid state", Now: time.Now(), CSRFToken: csrfTokenFromContext(r)}
+		s.renderTempl(w, templates.Login(p, s.idp != nil))
 		return
 	}
 
 	result, err := s.login.LoginOIDC(r.Context(), code, oidcState.CodeVerifier, r.RemoteAddr, r.UserAgent())
 	if err != nil {
-		data := PageData{Title: "Login", Error: "OIDC login failed", Now: time.Now()}
-		s.renderPage(w, "login.html", data)
+		p := PageData{Title: "Login", Error: "OIDC login failed", Now: time.Now(), CSRFToken: csrfTokenFromContext(r)}
+		s.renderTempl(w, templates.Login(p, s.idp != nil))
 		return
 	}
 
@@ -158,11 +155,5 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   int(s.sessionCfg.TTL.Seconds()),
 	})
 
-	redirectAfter := oidcState.RedirectAfter
-	if redirectAfter == "" {
-		redirectAfter = "/admin/"
-	}
-	s.redirect(w, r, redirectAfter)
+	s.redirect(w, r, "/admin/")
 }
-
-// cdomain.SessionID is used for session ID values

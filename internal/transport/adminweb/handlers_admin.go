@@ -1,19 +1,18 @@
 // Package adminweb — handlers_admin.go: handlers /admin/* (services, channels, agents).
-//
-// Fase 5: /admin/services (health + métricas) +
-// /admin/tenants/:id/channels (5 canais UI) +
-// /admin/tenants/:id/agents (CRUD).
 package adminweb
 
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
+
+	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/templates"
 )
 
-// AdminHandlers agrupa os handlers admin-only.
+// AdminHandlers agrupa dependências dos handlers admin-only.
 type AdminHandlers struct {
 	log           zerolog.Logger
 	healthChecker interface {
@@ -34,12 +33,21 @@ func (h *AdminHandlers) services(w http.ResponseWriter, r *http.Request) {
 	if h.healthChecker != nil {
 		health = h.healthChecker.All(r.Context())
 	}
-	data := map[string]any{
-		"Health": health,
-		"Checks": len(health),
+	checks := make([]templates.HealthCheck, 0, len(health))
+	for name, err := range health {
+		hc := templates.HealthCheck{Name: name}
+		if err == nil {
+			hc.Status = "ok"
+		} else {
+			hc.Status = "down"
+			hc.Detail = err.Error()
+		}
+		checks = append(checks, hc)
 	}
+	p := templates.PageData{Title: "Services", Now: time.Now()}
+	component := templates.Health(templates.HealthData{Page: p, Checks: checks})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := ServicesPage(data).Render(r.Context(), w); err != nil {
+	if err := component.Render(r.Context(), w); err != nil {
 		h.log.Error().Err(err).Msg("services: render")
 	}
 }
@@ -52,20 +60,17 @@ func (h *AdminHandlers) channels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Lista hardcoded dos 5 canais (Fase 5: sem registry dinâmico na UI).
-	canais := []map[string]any{
-		{"id": "waba", "name": "WhatsApp Business", "implemented": true, "capabilities": []string{"text", "media", "reactions", "delete", "templates"}},
-		{"id": "whatsmeow", "name": "WhatsApp (informal)", "implemented": true, "capabilities": []string{"text", "media", "reactions", "edit", "delete", "groups", "presence", "typing", "mark_read"}},
-		{"id": "instagram", "name": "Instagram Direct", "implemented": true, "capabilities": []string{"text", "media", "reactions"}},
-		{"id": "messenger", "name": "Facebook Messenger", "implemented": true, "capabilities": []string{"text", "media", "reactions", "mark_read", "typing"}},
-		{"id": "telegram_bot", "name": "Telegram Bot", "implemented": true, "capabilities": []string{"text", "media", "reactions", "edit", "delete", "typing", "groups", "inline_keyboard"}},
+	channels := []templates.ChannelRow{
+		{ID: "waba", Name: "WhatsApp Business", Implemented: true, Capabilities: []templates.ChannelCapability{"text", "media", "reactions", "delete", "templates"}},
+		{ID: "whatsmeow", Name: "WhatsApp (informal)", Implemented: true, Capabilities: []templates.ChannelCapability{"text", "media", "reactions", "edit", "delete", "groups", "presence", "typing", "mark_read"}},
+		{ID: "instagram", Name: "Instagram Direct", Implemented: true, Capabilities: []templates.ChannelCapability{"text", "media", "reactions"}},
+		{ID: "messenger", Name: "Facebook Messenger", Implemented: true, Capabilities: []templates.ChannelCapability{"text", "media", "reactions", "mark_read", "typing"}},
+		{ID: "telegram_bot", Name: "Telegram Bot", Implemented: true, Capabilities: []templates.ChannelCapability{"text", "media", "reactions", "edit", "delete", "typing", "groups", "inline_keyboard"}},
 	}
-	data := map[string]any{
-		"TenantID": tenantID,
-		"Channels": canais,
-		"Total":    len(canais),
-	}
+	p := templates.PageData{Title: "Channels", Now: time.Now()}
+	component := templates.Channels(templates.ChannelsData{Page: p, TenantID: tenantID, Channels: channels})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := ChannelsPage(data).Render(r.Context(), w); err != nil {
+	if err := component.Render(r.Context(), w); err != nil {
 		h.log.Error().Err(err).Msg("channels: render")
 	}
 }
@@ -77,14 +82,10 @@ func (h *AdminHandlers) agents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	// Fase 5: stub. Production lê do core/admin.AgentRepo.
-	data := map[string]any{
-		"TenantID": tenantID,
-		"Agents":   []any{}, // vazio
-		"Total":    0,
-	}
+	p := templates.PageData{Title: "Agents", Now: time.Now()}
+	component := templates.Agents(templates.AgentsData{Page: p, TenantID: tenantID, Agents: []templates.AgentRow{}})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := AgentsPage(data).Render(r.Context(), w); err != nil {
+	if err := component.Render(r.Context(), w); err != nil {
 		h.log.Error().Err(err).Msg("agents: render")
 	}
 }

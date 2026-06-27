@@ -1,0 +1,49 @@
+package templates
+
+import "github.com/felipedsvit/mez-go-mono/internal/core/admin"
+
+// AuditData é a prop tipada para Audit (substitui PageData.Data any).
+type AuditData struct {
+	Page    PageData
+	Entries []admin.AuditEntry
+}
+
+templ Audit(d AuditData) {
+	@Layout("Audit Log", d.Page) {
+		<h1>Audit Log</h1>
+		<div class="card">
+			if len(d.Entries) == 0 {
+				<p><em>No audit entries.</em></p>
+			} else {
+				<table>
+					<thead>
+						<tr>
+							<th>When</th>
+							<th>Actor</th>
+							<th>Action</th>
+							<th>Target</th>
+							<th>Tenant</th>
+							<th>IP</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, e := range d.Entries {
+							<tr>
+								<td>{ FormatDate(e.CreatedAt, "2006-01-02 15:04:05") }</td>
+								<td>{ e.ActorEmail }</td>
+								<td><code>{ string(e.Action) }</code></td>
+								<td>
+									if e.TargetType != "" {
+										<code>{ e.TargetType }:{ e.TargetID }</code>
+									}
+								</td>
+								<td>{ e.TenantID }</td>
+								<td>{ e.IP }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+	}
+}

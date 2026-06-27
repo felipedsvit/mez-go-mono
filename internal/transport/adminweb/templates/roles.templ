@@ -1,0 +1,137 @@
+package templates
+
+import "github.com/felipedsvit/mez-go-mono/internal/core/admin"
+
+// RolesData é a prop para /admin/roles.
+type RolesData struct {
+	Page  PageData
+	Roles []admin.Role
+}
+
+templ Roles(d RolesData) {
+	@Layout("Roles", d.Page) {
+		<h1>Roles</h1>
+		<div class="card">
+			if len(d.Roles) == 0 {
+				<p><em>No roles defined.</em></p>
+			} else {
+				<table>
+					<thead>
+						<tr>
+							<th>Name</th>
+							<th>Scope</th>
+							<th>Permissions</th>
+							<th>Built-in</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, r := range d.Roles {
+							<tr>
+								<td><a href={ templ.SafeURL("/admin/roles/" + string(r.ID)) }>{ r.Name }</a></td>
+								<td><code>{ string(r.Scope) }</code></td>
+								<td>{ len(r.Permissions) } perms</td>
+								<td>
+									if r.IsBuiltin {
+										<span class="badge badge-active">built-in</span>
+									} else {
+										<span class="badge badge-invited">custom</span>
+									}
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+	}
+}
+
+// RoleDetailData é a prop para /admin/roles/{id}.
+type RoleDetailData struct {
+	Page        PageData
+	Role        admin.Role
+	AllPerms    []admin.Permission
+	HasPerms    []admin.Permission
+}
+
+templ RoleDetail(d RoleDetailData) {
+	@Layout("Role: " + d.Role.Name, d.Page) {
+		<h1>{ d.Role.Name }</h1>
+		<p class="muted">Scope: <code>{ string(d.Role.Scope) }</code> · Built-in: { d.Role.IsBuiltin }</p>
+		<div class="card">
+			<h2>Permissions</h2>
+			<form method="POST" action={ templ.SafeURL("/admin/roles/" + string(d.Role.ID) + "/permissions") }>
+				@CSRFInput(d.Page.CSRFToken)
+				<table>
+					<thead>
+						<tr>
+							<th>Permission</th>
+							<th>Granted</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, perm := range d.AllPerms {
+							<tr>
+								<td><code>{ string(perm) }</code></td>
+								<td>
+									if containsPerm(d.HasPerms, perm) {
+										<input type="checkbox" name="permissions" value={ string(perm) } checked/>
+									} else {
+										<input type="checkbox" name="permissions" value={ string(perm) }/>
+									}
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+				<button type="submit" class="btn btn-primary">Save</button>
+			</form>
+		</div>
+	}
+}
+
+// RoleNewData é a prop para /admin/roles/new.
+type RoleNewData struct {
+	Page PageData
+	Role admin.Role
+}
+
+templ RoleNew(d RoleNewData) {
+	@Layout("New Role", d.Page) {
+		<h1>New Role</h1>
+		<p class="muted">Cria um papel custom; defina as permissões na próxima tela.</p>
+		<div class="card" style="max-width: 480px;">
+			<form method="POST" action="/admin/roles">
+				@CSRFInput(d.Page.CSRFToken)
+				<div class="form-group">
+					<label for="name">Name</label>
+					<input type="text" id="name" name="name" required minlength="2" maxlength="50" placeholder="suporte-nivel-2" autofocus/>
+				</div>
+				<div class="form-group">
+					<label for="scope">Scope</label>
+					<select id="scope" name="scope">
+						<option value="tenant" selected?={ d.Role.Scope == admin.ScopeTenant }>Tenant</option>
+						<option value="platform" selected?={ d.Role.Scope == admin.ScopePlatform }>Platform</option>
+					</select>
+				</div>
+				<div class="form-group">
+					<label for="tenant_id">Tenant <small>(required for tenant scope)</small></label>
+					<input type="text" id="tenant_id" name="tenant_id" placeholder="tenant_..."/>
+				</div>
+				<div class="form-actions">
+					<a href="/admin/roles" role="button" class="btn btn-secondary">Cancel</a>
+					<button type="submit" class="btn btn-primary">Create</button>
+				</div>
+			</form>
+		</div>
+	}
+}
+
+func containsPerm(haystack []admin.Permission, needle admin.Permission) bool {
+	for _, p := range haystack {
+		if p == needle {
+			return true
+		}
+	}
+	return false
+}

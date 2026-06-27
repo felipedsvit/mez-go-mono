@@ -1,28 +1,37 @@
+// Package adminweb — server.go: wire-up do servidor HTTP admin e
+// renderização de páginas. Após a migração para templ (Fase 2 da
+// 000_FIXES.md, decisão revisto), o servidor não usa mais o wrapper
+// html/template em render/. As páginas são components templ tipados
+// declarados em internal/transport/adminweb/templates/, e a função
+// renderTempl(component, w) escreve a saída em w.
 package adminweb
 
 import (
-	"html/template"
-	"io/fs"
+	"context"
 	"net/http"
 	"time"
 
+	"github.com/a-h/templ"
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
 
 	cdomain "github.com/felipedsvit/mez-go-mono/internal/core/admin"
 	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/middleware"
 	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/middleware/ratelimit"
-	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/render"
+	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/templates"
 	ucadmin "github.com/felipedsvit/mez-go-mono/internal/usecase/admin"
 	ucauth "github.com/felipedsvit/mez-go-mono/internal/usecase/auth"
 	ucbackup "github.com/felipedsvit/mez-go-mono/internal/usecase/backup"
 	"github.com/felipedsvit/mez-go-mono/pkg/health"
 )
 
+// PageData é re-exportado do package templates para os handlers
+// poderem usá-lo como templates.PageData sem importar o package
+// de templates em todo lugar.
+type PageData = templates.PageData
+
 type Server struct {
 	log     zerolog.Logger
-	render  *render.Renderer
-	tpls    fs.FS
 	health  *health.Checker
 	version string
 
@@ -59,28 +68,8 @@ func NewServer(
 	roles ucadmin.RoleUseCase,
 	audit ucadmin.AuditQueryUseCase,
 ) *Server {
-	funcs := template.FuncMap{
-		"now": time.Now,
-		"truncate": func(s string, n int) string {
-			if len(s) > n {
-				return s[:n-3] + "..."
-			}
-			return s
-		},
-		"hasPerm": func(perms []cdomain.Permission, perm string) bool {
-			for _, p := range perms {
-				if string(p) == perm {
-					return true
-				}
-			}
-			return false
-		},
-	}
-
 	return &Server{
 		log:          log,
-		render:       render.New("base", funcs),
-		tpls:         TemplatesFS,
 		health:       health,
 		version:      version,
 		login:        login,
@@ -157,10 +146,14 @@ func (s *Server) Router() chi.Router {
 	return r
 }
 
-func (s *Server) renderPage(w http.ResponseWriter, page string, data PageData) {
+// renderTempl escreve o component templ em w com Content-Type text/html.
+// Substitui o antigo s.renderPage(w, "name.html", data). Em caso de
+// erro de renderização (improvável — templates são type-checked em
+// build via templ generate), loga e responde 500.
+func (s *Server) renderTempl(w http.ResponseWriter, c templ.Component) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.render.Render(w, s.tpls, page, data); err != nil {
-		s.log.Error().Err(err).Str("page", page).Msg("render error")
+	if err := c.Render(renderContext(), w); err != nil {
+		s.log.Error().Err(err).Msg("render templ")
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 	}
 }
@@ -175,8 +168,35 @@ func (s *Server) formValue(r *http.Request, key string) string {
 
 func principalOrEmpty(r *http.Request) cdomain.Principal {
 	p, ok := middleware.PrincipalFromContext(r.Context())
-	if !ok {
-		return cdomain.Principal{}
+	if ok {
+		return p
 	}
-	return p
+	return cdomain.Principal{}
+}
+
+// csrfTokenFromContext extrai o CSRF token do cookie XSRF-TOKEN. Substitui
+// o stub csrfTokenFromCtx de handlers_app.go que retornava string vazia.
+// O cookie é setado pelo middleware CSRF no primeiro GET.
+func csrfTokenFromContext(r *http.Request) string {
+	if c, err := r.Cookie("XSRF-TOKEN"); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+// basePageData monta um PageData com Principal e CSRFToken populados a
+// partir do request. Os handlers preenchem Title e Error/Success.
+func (s *Server) basePageData(r *http.Request) PageData {
+	return PageData{
+		Principal: principalOrEmpty(r),
+		CSRFToken: csrfTokenFromContext(r),
+		Now:       time.Now(),
+	}
+}
+
+// renderContext devolve um context.Context com timeout razoável para
+// renderização. Hoje é o request context diretamente; reservado para
+// futuro timeout independente da request (ex.: renderização pesada).
+func renderContext() context.Context {
+	return context.Background()
 }

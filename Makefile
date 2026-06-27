@@ -1,8 +1,9 @@
-.PHONY: tools build test lint generate openapi-gen openapi-validate migrate-up migrate-down docker docker-compose-up tidy govulncheck rotate-kek
+.PHONY: tools build test lint generate openapi-gen openapi-validate migrate-up migrate-down docker docker-compose-up tidy govulncheck rotate-kek templ-gen templ-check
 
 GO ?= go
 BIN := mez-go-mono
 MIGRATE_SOURCE := file://migrations
+export PATH := $(HOME)/go/bin:$(PATH)
 
 # ==============================================================================
 # Tools
@@ -66,8 +67,17 @@ govulncheck:
 
 generate: templ-gen openapi-gen
 
+# templ-gen roda `templ generate` em todos os .templ do repo. Falha
+# (não skip) se templ não estiver instalado — CI exige o tool.
 templ-gen:
-	@which templ > /dev/null 2>&1 && templ generate || echo "templ not installed; skipping"
+	@which templ > /dev/null 2>&1 || (echo "templ not installed; run 'make tools'"; exit 1)
+	templ generate
+
+# templ-check: roda `templ generate` e falha se houver drift em arquivos
+# *_templ.go (regenera _templ.go, diff contra o commit). Espelha
+# `openapi-validate` para a parte templ.
+templ-check: templ-gen
+	@git diff --exit-code '*.templ.go' '**/*_templ.go' > /dev/null || (echo "templ drift detectado — rode 'make templ-gen' e commit"; exit 1)
 
 openapi-gen:
 	@which oapi-codegen > /dev/null 2>&1 && oapi-codegen -generate types,server -package api api/openapi.yaml > api/openapi.gen.go || echo "oapi-codegen not installed; skipping"

@@ -1,0 +1,141 @@
+package templates
+
+// ChannelCapability representa uma capability que um canal suporta.
+type ChannelCapability string
+
+// ChannelRow é uma linha da tabela de canais.
+type ChannelRow struct {
+	ID           string
+	Name         string
+	Implemented  bool
+	Capabilities []ChannelCapability
+}
+
+// ChannelsData é a prop para /admin/tenants/{id}/channels.
+type ChannelsData struct {
+	Page     PageData
+	TenantID string
+	Channels []ChannelRow
+}
+
+templ Channels(d ChannelsData) {
+	@Layout("Channels — " + d.TenantID, d.Page) {
+		<h1>Channels</h1>
+		<p class="muted">Tenant: <code>{ d.TenantID }</code> · Status dos 5 canais</p>
+		<div class="card">
+			<table>
+				<thead>
+					<tr>
+						<th>Channel</th>
+						<th>Name</th>
+						<th>Status</th>
+						<th>Capabilities</th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, ch := range d.Channels {
+						<tr>
+							<td><code>{ ch.ID }</code></td>
+							<td>{ ch.Name }</td>
+							<td>
+								if ch.Implemented {
+									<span class="badge badge-active">ready</span>
+								} else {
+									<span class="badge badge-disabled">unavailable</span>
+								}
+							</td>
+							<td>
+								for _, cap := range ch.Capabilities {
+									<span class="badge badge-invited">{ string(cap) }</span>
+								}
+							</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+		<p style="margin-top:1rem;">
+			<a href={ templ.SafeURL("/admin/tenants/" + d.TenantID) }>← back to tenant</a>
+		</p>
+	}
+}
+
+// AgentsData é a prop para /admin/tenants/{id}/agents.
+type AgentsData struct {
+	Page     PageData
+	TenantID string
+	Agents   []AgentRow
+}
+
+// AgentRow é uma linha de agente.
+type AgentRow struct {
+	ID     string
+	Email  string
+	Name   string
+	Status string
+	Load   int
+	Max    int
+}
+
+templ Agents(d AgentsData) {
+	@Layout("Agents — " + d.TenantID, d.Page) {
+		<h1>Agents</h1>
+		<p class="muted">Tenant: <code>{ d.TenantID }</code></p>
+		<div class="card">
+			if len(d.Agents) == 0 {
+				<p><em>No agents registered.</em></p>
+			} else {
+				<table>
+					<thead>
+						<tr>
+							<th>Email</th>
+							<th>Name</th>
+							<th>Status</th>
+							<th>Load</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, a := range d.Agents {
+							<tr>
+								<td>{ a.Email }</td>
+								<td>{ a.Name }</td>
+								<td>{ a.Status }</td>
+								<td>{ itoaInt(a.Load) }/{ itoaInt(a.Max) }</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+		<div class="card" style="max-width: 480px;">
+			<h2>Invite Agent</h2>
+			<form method="POST" action={ templ.SafeURL("/admin/tenants/" + d.TenantID + "/agents") }>
+				@CSRFInput(d.Page.CSRFToken)
+				<div class="form-group">
+					<label for="email">Email</label>
+					<input type="email" id="email" name="email" required/>
+				</div>
+				<button type="submit" class="btn btn-primary">Invite</button>
+			</form>
+		</div>
+	}
+}
+
+func itoaInt(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	digits := []byte{}
+	for n > 0 {
+		digits = append([]byte{byte('0' + n%10)}, digits...)
+		n /= 10
+	}
+	if neg {
+		return "-" + string(digits)
+	}
+	return string(digits)
+}
