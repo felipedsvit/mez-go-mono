@@ -80,7 +80,7 @@ templ-check: templ-gen
 	@git diff --exit-code '*.templ.go' '**/*_templ.go' > /dev/null || (echo "templ drift detectado — rode 'make templ-gen' e commit"; exit 1)
 
 openapi-gen:
-	@which oapi-codegen > /dev/null 2>&1 && oapi-codegen -generate types,server -package api api/openapi.yaml > api/openapi.gen.go || echo "oapi-codegen not installed; skipping"
+	@which oapi-codegen > /dev/null 2>&1 && oapi-codegen -generate types,chi-server -package api api/openapi.yaml > api/openapi.gen.go || echo "oapi-codegen not installed; skipping"
 
 # openapi-validate roda `openapi-gen` e falha se o arquivo gerado mudou.
 # Fase 7 #93: garante que o commit inclui o .gen.go sincronizado com o spec.

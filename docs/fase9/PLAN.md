@@ -1,21 +1,42 @@
 # Fase 9 — Maturidade de produção SMM (whatsmeow real + escala horizontal + credenciais live)
 
 > **Status:** planejamento · junho/2026 · tracking em `fase9-tracking`.
-> **Escopo:** 1 carryover (#158) + 18 issues novas (#159–#176) = **19 issues · ~22d solo** (3-4 sprints) · single commit (squash) por sprint → `main`.
+> **Escopo:** 20 carryovers de segurança (#131, #132, #133, #135, #137, #138, #140, #142, #143, #145, #146, #147, #148, #149, #150, #151, #153, #154, #155, #157 — Sprint 0, pré-requisito) + 1 carryover executado (#158) + 18 issues novas (#159–#176) + 4 carryovers de design (#177–#180, Seção 11) = **43 issues · 39 execução + 4 roadmap · ~32d solo** (5-6 sprints) · single commit (squash) por sprint → `main`. **ADRs:** 8 (0022-0029) + 2 roadmap (0030-0031) + 9 complementares (0032-0040) + 3 segurança (0041-0043) = **22 ADRs formais**.
 > **Pré-requisitos:** Fases 0–8 merged (Fase 8 commit `bdee3cd` em `main`).
-> **Base normativa:** `docs/fase8/PLAN.md` (C12 — boot determinístico), `docs/fase8/FIXES/003_SECURITY_AUDIT.md` (H2/H9 carryovers), `docs/fase8/FIXES/002_ARCHITECTURE_REVIEW.md` (item 1.1 SKIP LOCKED).
-> **Origem do plano:** auditoria arquitetural 5-pilares (junho/2026) — gateway omnichannel `mez-go-mono` avaliado contra critérios de mercado de Social Media Management (SMM) multiredes.
+> **Base normativa:** `docs/fase8/PLAN.md` (C12 — boot determinístico), `docs/fase8/FIXES/003_SECURITY_AUDIT.md` (C1-C10 + H1-H15 + M1-M15), `docs/fase8/FIXES/002_ARCHITECTURE_REVIEW.md` (item 1.1 SKIP LOCKED).
+> **Origem do plano:** auditoria arquitetural 5-pilares (junho/2026) + **auditoria de segurança STRIDE+DREAD 5-domínios** (10 CRITICAL + 15 HIGH + 15 MEDIUM) — gateway omnichannel `mez-go-mono` avaliado contra critérios de mercado de Social Media Management (SMM) multiredes.
+> ⚠️ **9 issues da auditoria de segurança já foram mergeadas em `main` via `bdee3cd` (PR #108) mas o `Closes` não foi propagado**: #129, #130, #134, #136, #139, #141, #144, #152, #156. Estas devem ser fechadas como parte do housekeeping do Sprint 0 (ver §12.0).
 
-### Mapeamento issue → escopo (carryover + novas)
+### Mapeamento issue → escopo (carryovers + novas)
 
 | Issue | Pilar | Título | Tipo |
 |------:|-------|--------|------|
-| [#158](https://github.com/felipedsvit/mez-go-mono/issues/158) | P5 | Substituir `stubWhatsmeowClient` por `*whatsmeow.Client` real (Fase 9) | NEW · carryover |
-| [#159](https://github.com/felipedsvit/mez-go-mono/issues/159) | P2 | A1 — `OutboxRepo.ClaimNext` em `BeginTx` (`FOR UPDATE SKIP LOCKED` funcional) | REWRITE |
-| [#160](https://github.com/felipedsvit/mez-go-mono/issues/160) | P2 | A2 — Circuit breaker per `(tenant, channel)` em volta de `Sender.Send` | NEW |
-| [#161](https://github.com/felipedsvit/mez-go-mono/issues/161) | P2 | A3 — Jitter + backoff exponencial persistente em outbox retry | REWRITE |
-| [#162](https://github.com/felipedsvit/mez-go-mono/issues/162) | P5 | A4 — Handlers webhook Meta/Telegram retornam 200 antes de ingestar (true async) | REWRITE |
-| [#163](https://github.com/felipedsvit/mez-go-mono/issues/163) | P4 | A5 — Scheduled posts: coluna `scheduled_at` + query filtrada + índice parcial | NEW |
+| [#131](https://github.com/felipedsvit/mez-go-mono/issues/131) | **P6** | **S0-C3** — Cookie `__Host-mez_admin` sem `Secure: true` (C3 audit) | FIX |
+| [#132](https://github.com/felipedsvit/mez-go-mono/issues/132) | **P6** | **S0-C4** — Admin handlers: autenticação sem autorização (C4 audit) | REWRITE |
+| [#133](https://github.com/felipedsvit/mez-go-mono/issues/133) | **P6** | **S0-C5** — IDOR API REST: handlers não usam `RunInTenantTx` (C5 audit) | REWRITE |
+| [#135](https://github.com/felipedsvit/mez-go-mono/issues/135) | **P6** | **S0-C7** — Privilege escalation via role editor (C7 audit) | REWRITE |
+| [#137](https://github.com/felipedsvit/mez-go-mono/issues/137) | **P6** | **S0-C9** — Backup restore aceita `_table` arbitrário (defense-in-depth SQLi, C9 audit) | FIX |
+| [#138](https://github.com/felipedsvit/mez-go-mono/issues/138) | **P6** | **S0-C10** — S3 keys/prefixos sem validar `tenantID` (path confusion, C10 audit) | FIX |
+| [#140](https://github.com/felipedsvit/mez-go-mono/issues/140) | **P6** | **S0-H2** — OIDC `nonce` não validado (replay de ID-token, H2 audit) | FIX |
+| [#142](https://github.com/felipedsvit/mez-go-mono/issues/142) | **P6** | **S0-H6b** — JWT secret sem check de length/entropy no startup (H6 — diferente de #144) | FIX |
+| [#143](https://github.com/felipedsvit/mez-go-mono/issues/143) | **P6** | **S0-H14b** — `ReadHeaderTimeout=0` no `http.Server` (slow-loris, H14) | FIX |
+| [#145](https://github.com/felipedsvit/mez-go-mono/issues/145) | **P6** | **S0-H7** — CSRF `/setup` POST sem validação (apenas leitura do token, H7) | FIX |
+| [#146](https://github.com/felipedsvit/mez-go-mono/issues/146) | **P6** | **S0-H13** — Security headers sempre invocados com `secure=false` (H13) | FIX |
+| [#147](https://github.com/felipedsvit/mez-go-mono/issues/147) | **P6** | **S0-H2-dup** — Possível duplicata de #140 (a confirmar; fechar como `duplicate` se idêntico) | TRIAGE |
+| [#148](https://github.com/felipedsvit/mez-go-mono/issues/148) | **P6** | **S0-H5** — `RunAsPlatform` audit é best-effort, não atômico (H5) | FIX |
+| [#149](https://github.com/felipedsvit/mez-go-mono/issues/149) | **P6** | **S0-H8+H9+H10** — Concorrência: `bus.UnsubscribeInbound` `reflect.Pointer`, `OutboxRepo.ClaimNext` race, drain TOCTOU | REWRITE |
+| [#150](https://github.com/felipedsvit/mez-go-mono/issues/150) | **P6** | **S0-H11** — `labstack/echo` pulled por dead code (`api/openapi.gen.go`); supply-chain risk | FIX |
+| [#151](https://github.com/felipedsvit/mez-go-mono/issues/151) | **P6** | **S0-H12** — Sem TLS termination / sem redirect HTTP→HTTPS (H12) | FIX |
+| [#153](https://github.com/felipedsvit/mez-go-mono/issues/153) | **P6** | **S0-M3** — API error responses leak internal error strings (M3) | FIX |
+| [#154](https://github.com/felipedsvit/mez-go-mono/issues/154) | **P6** | **S0-M8** — Audit log query sem tenant filter default (M8) | FIX |
+| [#155](https://github.com/felipedsvit/mez-go-mono/issues/155) | **P6** | **S0-M10-dup** — Possível duplicata de #156 (a confirmar; fechar como `duplicate` se idêntico) | TRIAGE |
+| [#157](https://github.com/felipedsvit/mez-go-mono/issues/157) | **P6** | **S0-M15** — Role ID via `time.Now().UnixNano()` (previsível/collisivo, M15) | FIX |
+| [#158](https://github.com/felipedsvit/mez-go-mono/issues/158) | P5 | A1 — Substituir `stubWhatsmeowClient` por `*whatsmeow.Client` real (Fase 9) | NEW · carryover |
+| [#159](https://github.com/felipedsvit/mez-go-mono/issues/159) | P2 | A2 — `OutboxRepo.ClaimNext` em `BeginTx` (`FOR UPDATE SKIP LOCKED` funcional) | REWRITE |
+| [#160](https://github.com/felipedsvit/mez-go-mono/issues/160) | P2 | A3 — Circuit breaker per `(tenant, channel)` em volta de `Sender.Send` | NEW |
+| [#161](https://github.com/felipedsvit/mez-go-mono/issues/161) | P2 | A4 — Jitter + backoff exponencial persistente em outbox retry | REWRITE |
+| [#162](https://github.com/felipedsvit/mez-go-mono/issues/162) | P5 | A5 — Handlers webhook Meta/Telegram retornam 200 antes de ingestar (true async) | REWRITE |
+| [#163](https://github.com/felipedsvit/mez-go-mono/issues/163) | P4 | A6 — Scheduled posts: coluna `scheduled_at` + query filtrada + índice parcial | NEW |
 | [#164](https://github.com/felipedsvit/mez-go-mono/issues/164) | P2 | B1 — Per-tenant + per-channel rate limit (token-bucket in-memory) | NEW |
 | [#165](https://github.com/felipedsvit/mez-go-mono/issues/165) | P3 | B2 — Token refresh automático para Meta (`fb_exchange_token`) | NEW |
 | [#166](https://github.com/felipedsvit/mez-go-mono/issues/166) | P3 | B3 — OIDC `nonce` validation + persistência de `refresh_token` cifrado (H2 audit) | ADAPT |
@@ -28,14 +49,15 @@
 | [#173](https://github.com/felipedsvit/mez-go-mono/issues/173) | P5 | C4 — `goleak.VerifyTestMain` em `webhook/`, `bus/`, `outbox/`, `reconcile/` | MECHANICAL |
 | [#174](https://github.com/felipedsvit/mez-go-mono/issues/174) | P2 | C5 — Health check per-channel real (`Sender.Ping(ctx)` interface + 5 adapters) | NEW |
 | [#175](https://github.com/felipedsvit/mez-go-mono/issues/175) | P5 | C6 — Testes E2E validando async webhook (t_200 < 50ms com DB tx 500ms) | NEW |
-| [#176](https://github.com/felipedsvit/mez-go-mono/issues/176) | P4 | A5.1 — UI/UX API para agendar posts (endpoint + `cron` reconciler) | NEW |
+| [#176](https://github.com/felipedsvit/mez-go-mono/issues/176) | P4 | A6.1 — UI/UX API para agendar posts (endpoint + `cron` reconciler) | NEW |
 | [#177](https://github.com/felipedsvit/mez-go-mono/issues/177) | P2 | D1 — `coordinator/registry`: schema `coordinator_capabilities` + advertise heartbeat `[Seção 11 — roadmap]` | NEW · carryover Seção 11 |
 | [#178](https://github.com/felipedsvit/mez-go-mono/issues/178) | P2 | D2 — `coordinator/claim`: `pg_try_advisory_lock` + lease TTL 60s `[Seção 11 — roadmap]` | NEW · carryover Seção 11 |
 | [#179](https://github.com/felipedsvit/mez-go-mono/issues/179) | P2 | D3 — `coordinator/lease`: heartbeat goroutine + renew + lost detection `[Seção 11 — roadmap]` | NEW · carryover Seção 11 |
 | [#180](https://github.com/felipedsvit/mez-go-mono/issues/180) | P2 | D4 — `coordinator/migrate`: graceful session handoff + reconciler para orphans `[Seção 11 — roadmap]` | NEW · carryover Seção 11 |
 
-> **Legenda pilares:** P1=Adapter/Factory · P2=Resiliência/RateLimit · P3=Credenciais · P4=Agendamento · P5=Webhooks/Real-time.
-> **Carryovers:** #158 (whatsmeow real, execução na Fase 9) + #177-#180 (Seção 11, **execução em Fase 10+** — apenas design documentado aqui).
+> **Legenda pilares:** P1=Adapter/Factory · P2=Resiliência/RateLimit · P3=Credenciais · P4=Agendamento · P5=Webhooks/Real-time · **P6=Segurança (Sprint 0)**.
+> **Carryovers:** #158 (whatsmeow real) + #131, #132, #133, #135, #137, #138, #140, #142, #143, #145, #146, #147, #148, #149, #150, #151, #153, #154, #155, #157 (auditoria Fase 8 não mergeados, Sprint 0) + #177-#180 (Seção 11, **execução em Fase 10+** — apenas design documentado aqui).
+> **Dependência crítica Sprint 0 → Sprint 1–5:** `RunInTenantTx` correto (#133) é pré-requisito para qualquer handler novo (#162, #165, #166, #167); admin authorization (#132) é pré-requisito para endpoints admin novos (#169, #174); OIDC nonce (#140) é pré-requisito para #166.
 
 ---
 
@@ -113,6 +135,8 @@ O que **Fase 8 não cobriu** — e que a **auditoria arquitetural 5-pilares** (j
 
 ### 1.4 Estimativa ajustada (com reuso)
 
+#### Sprints 1–5 (escopo original)
+
 | Categoria | LOC | Dias |
 |---|---:|---:|
 | **NEW** (whatsmeow real + circuit breaker + scheduled posts + rate limit + Meta refresh + OIDC nonce + webhook secrets + dedup + DLQ consumer + partition bus + health check) | ~3.800 | 9.5 |
@@ -121,7 +145,27 @@ O que **Fase 8 não cobriu** — e que a **auditoria arquitetural 5-pilares** (j
 | **MECHANICAL** (dedup cache + `goleak` propagação + remover `port.Channel` + async E2E) | ~700 | 1.5 |
 | **Tests** (unit + integration + chaos) | ~2.500 | 4.0 |
 | **Buffer** (20% para breaker tuning + jitter math + chaos flake) | — | 2.5 |
-| **Total** | **~8.800** | **22.0** |
+| **Subtotal Sprints 1–5** | **~8.800** | **22.0** |
+
+#### Sprint 0 (auditoria de segurança — pré-requisito, Seção 12)
+
+| Categoria | LOC | Dias |
+|---|---:|---:|
+| **CRITICAL** (6 issues, §12.1) | ~1.500 | 3.4 |
+| **HIGH** (9 issues + 1 triage, §12.2) | ~1.800 | 4.4 |
+| **MEDIUM** (3 issues + 1 triage, §12.3) | ~600 | 1.4 |
+| **Housekeeping** (9 issues stale, §12.0) | ~50 | 0.2 |
+| **Tests** (regressão IDOR/authz/concorrência) | ~1.200 | 1.0 |
+| **Buffer** (15% para races intermitentes + deps) | — | 1.5 |
+| **Subtotal Sprint 0** | **~5.150** | **~11.9** |
+
+#### Total Fase 9 (Sprint 0 + Sprints 1–5)
+
+| | LOC | Dias |
+|---|---:|---:|
+| **Total Fase 9** | **~13.950** | **~33.9d** |
+
+**Interpretação:** **6-7 sprints solo** ou **3-4 sprints com 2 devs** (paralelizando Sprint 0A/0B).
 
 Distribuição em sprints:
 - **Sprint 1 — Production-blockers A1+A2+A3+A4** (5 dias): fixes de resiliência e async webhook.
@@ -156,9 +200,15 @@ Implementa a **maturidade de produção SMM** que o README §23 implicitamente a
 
 > **Carryover carryover:** a issue #158 (whatsmeow real → `*whatsmeow.Client`) **é** executada na Fase 9 (Sprint 5); as issues #177–#180 (coordinator multi-replica) **não** — ficam como carryover de design para Fase 10+. A Seção 11 deste plano documenta a **estratégia completa** (incluindo tabelas comparativas, ADRs e diagramas) para que a Fase 10+ possa começar com DoD pré-aprovado.
 
+> ⚠️ **Sprint 0 (Seção 12) é pré-requisito dos Sprints 1–5.** 6 CRITICAL + 9 HIGH + 3 MEDIUM da auditoria de segurança Fase 8 (`docs/fase8/FIXES/003_SECURITY_AUDIT.md`) ainda estão abertas; várias (#132 admin auth, #133 IDOR RunInTenantTx, #140 OIDC nonce, #151 TLS) afetam os handlers/features novos desta Fase 9. Detalhes em **Seção 12**.
+
 ---
 
 ## 3. Issues detalhadas
+
+> **Sprint 0 (Seção 12, pré-requisito) — 6 CRITICAL + 9 HIGH + 3 MEDIUM (carryover Fase 8). Detalhes na Seção 12.**
+>
+> **Sprints 1–5 (originais da Fase 9) — issues #158-#176. Detalhes abaixo.**
 
 ### Sprint 1 — Production-blockers (5 dias)
 
@@ -676,38 +726,77 @@ Implementa a **maturidade de produção SMM** que o README §23 implicitamente a
 ## 5. Sequência de execução (timeline)
 
 ```
+╔══════════════════════════════════════════════════════════════════════════╗
+║ Sprint 0 (11.9d) — Auditoria de segurança (PRÉ-REQUISITO, Seção 12)     ║
+║ ├── Day 0.2: §12.0 Housekeeping (#129, #130, #134, #136, #139, #141,   ║
+║ │            #144, #152, #156 — fechar 9 issues stale em main)          ║
+║ │                                                                       ║
+║ ├── Sub-sprint 0A (3.4d) — CRITICAL                                     ║
+║ │   ├── Day 0.5: #131 (cookie Secure)                                   ║
+║ │   ├── Day 1.0: #132 (admin authorization) [bloqueia #135, #154]       ║
+║ │   ├── Day 1.0: #133 (IDOR RunInTenantTx) [paralelo; bloqueia Sprint 3]║
+║ │   ├── Day 0.5: #135 (role escalation) [depende #132]                 ║
+║ │   ├── Day 0.3: #137 (restore _table allowlist)                        ║
+║ │   └── Day 0.3: #138 (S3 tenant path confusion)                        ║
+║ │                                                                       ║
+║ ├── Sub-sprint 0B (4.4d) — HIGH [paralelo com 0A se 2 devs]            ║
+║ │   ├── Day 0.5: #140 (OIDC nonce) [simplifica #166 Sprint 3]           ║
+║ │   ├── Day 0.3: #142 (JWT entropy)                                     ║
+║ │   ├── Day 0.2: #143 (ReadHeaderTimeout default)                       ║
+║ │   ├── Day 0.3: #145 (CSRF setup)                                      ║
+║ │   ├── Day 0.2: #146 (HSTS secure=true)                                ║
+║ │   ├── Day 0.1: #147 (triage duplicate)                                ║
+║ │   ├── Day 0.5: #148 (RunAsPlatform atomic)                            ║
+║ │   ├── Day 1.0: #149 (concorrência bus/outbox/drain)                   ║
+║ │   ├── Day 0.3: #150 (Echo dead code)                                  ║
+║ │   └── Day 0.5: #151 (TLS nativo + redirect)                           ║
+║ │                                                                       ║
+║ └── Sub-sprint 0C (1.4d) — MEDIUM                                       ║
+║     ├── Day 0.5: #153 (error sanitization)                              ║
+║     ├── Day 0.3: #154 (audit tenant filter) [depende #132]              ║
+║     ├── Day 0.1: #155 (triage duplicate)                                ║
+║     └── Day 0.5: #157 (UUID v7)                                         ║
+╚══════════════════════════════════════════════════════════════════════════╝
+                              ↓ GATE: 0A fechado + testes verde
 Sprint 1 (5d) — Production-blockers
 ├── Day 1: #159 (claim tx)
 ├── Day 2: #160 (circuit breaker)
 ├── Day 3-4: #161 (backoff persistente + jitter)
-└── Day 5: #162 (async webhook)
+└── Day 5: #162 (async webhook) [depende #133 RunInTenantTx]
 
 Sprint 2 (4d) — Scheduled posts
 ├── Day 1-2: #163 (schema + query + reconciler)
 └── Day 3-4: #176 (API + UI placeholder)
 
 Sprint 3 (4d) — Credenciais
-├── Day 1-2: #165 (Meta refresh)
-├── Day 2-3: #166 (OIDC nonce + refresh)
-└── Day 4: #167 (webhook secrets)
+├── Day 1-2: #165 (Meta refresh) [depende #133]
+├── Day 2-3: #166 (OIDC nonce + refresh) [#140 já cobre nonce — só persistência]
+└── Day 4: #167 (webhook secrets) [depende #133]
 
 Sprint 4 (5d) — Resiliência + observability
 ├── Day 1-2: #164 (rate limit)
 ├── Day 2-3: #168 (dedup cache)
-├── Day 3-4: #169 (DLQ consumer)
+├── Day 3-4: #169 (DLQ consumer) [depende #132 admin authz]
 └── Day 5: #170 + #171 + #173 (cleanup)
 
 Sprint 5 (4d) — Whatsmeow real + health
 ├── Day 1-2: #158 (real client + IdentityStore)
 ├── Day 2-3: #172 (honest matrix)
-├── Day 3-4: #174 (Ping)
+├── Day 3-4: #174 (Ping) [depende #132 admin authz]
 └── Day 4-5: #175 (E2E async)
 ```
 
-Total: **22 dias úteis** (4-5 semanas solo, ou 2-3 sprints com 2 devs).
+**Total: ~34 dias úteis** (6-7 semanas solo, ou 3-4 sprints com 2 devs paralelizando Sprint 0A/0B).
 
 ### Dependências críticas
 
+**Sprint 0 (gate para Sprint 1):**
+- `#132` (#135, #154) — Principal hydration é base para qualquer admin endpoint novo.
+- `#133` (#162, #165, #166, #167, #176) — `RunInTenantTx` é base para qualquer handler novo.
+- `#140` (#166) — OIDC nonce simplifica #166 para só persistência.
+- `#151` (#162) — TLS/regex same-origin são pré-requisito para webhook handler.
+
+**Sprints 1–5 (originais):**
 - `#159` (#161, #164) — claim em tx é base para todos que dependem de retry/backoff.
 - `#161` (#163, #164) — `next_attempt_at` é usado por retry e rate limit.
 - `#160` (#161) — breaker wrap vem antes do backoff (ordem de execução no relay).
@@ -757,6 +846,34 @@ Total: **22 dias úteis** (4-5 semanas solo, ou 2-3 sprints com 2 devs).
 - **ADR-0028 — `webhook_secrets` em tabela dedicada (não reusa `channel_credentials`)**. Justificativa: 1 tenant pode ter N `app_id` Meta; UNIQUE `(tenant_id, channel, app_id)` é o shape certo. Mesma `Keyring` cifra ambos.
 - **ADR-0029 — Bus quota per-tenant (não partition real)**. Justificativa: simplicidade; O(1) memória por tenant; rollback trivial. Partition real é pós-Fase 9 com Redis ou NATS JetStream.
 
+### ADRs complementares (Fase 9 + carryovers Fase 8 formalizados)
+
+- **ADR-0032 — `whatsmeow.IdentityStore` SQLite file-per-tenant** [#158]. Decisão: cada tenant tem um arquivo SQLite dedicado em `MEZ_DATA_DIR/tenants/<tenantID>/whatsmeow.db` que armazena o `*proto.Identity` cifrado por envelope. **Não** usar coluna `BYTEA` em `channel_credentials`. Justificativa: (a) `whatsmeow.Client` espera um `store.DeviceStore`; (b) blob binário grande (10-50KB) e hot-row em `channel_credentials` é anti-pattern; (c) file-per-tenant simplifica backup incremental; (d) envelope encryption (KEK→DEK, mesma `LocalSealer`) garante zero plaintext em disco. Trade-off: 1 arquivo por tenant aumenta contagem de files (mitigado: `MEZ_MAX_ACTIVE_TENANTS=100` teto); `mount` NFS em cluster K8s precisa de `ReadWriteMany` (Fase 10+ troca para `efs.csi.aws.com` ou statefulset com `volumeClaimTemplates`); recovery pós-`kill -9` reidrata do SQLite file (≤ 2s).
+
+- **ADR-0033 — Rate limit per-`(tenant, channel)` in-memory token-bucket (sem Redis)** [#164]. Decisão: `internal/adapter/cache/memory/ratelimit.go` mantém `map[cacheKey]*ratelimit.Limiter` com token-bucket (`golang.org/x/time/rate` ou in-house ~80 LOC). **Não** usar Redis. Justificativa: (a) single-process é premissa da Fase 9; in-memory é O(1) por acesso; (b) quota por canal muda raramente — não precisa de persistência; (c) restart do processo perde quotas, e isso é **desejável** (evita back-pressure acumulado pós-outage); (d) `golang.org/x/time/rate` é dep stdlib-level, sem risco de supply chain. Trade-off: rate limit não é compartilhado entre réplicas (Fase 10+ tem `n_tenants × n_replicas` taxa efetiva; aceitável porque canais cloud já impõem quotas próprias — WABA tier 1 = 80/s, IG = 200/h, MSG = 200/h, TG = 30/s). Migração futura para Redis é trivial (interface `port.RateLimiter` com 2 impls).
+
+- **ADR-0034 — `port.Sender.Ping(ctx) error` adicionado à interface (interface segregation vs Adapter pattern)** [#174]. Decisão: adicionar método `Ping(ctx) error` à `port.Sender` (atualmente 3 métodos: `Send`, `Capabilities`, `MediaUpload`). **Não** criar `port.HealthChecker` separado. Justificativa: (a) health check é responsabilidade primeira do sender; (b) interface segregation argument aplica quando há múltiplos consumers de subconjuntos — aqui o único consumer é `Registry.Health()`, que sempre quer todos os canais; (c) adicionar à interface força todos os adapters a implementarem (zero `panic: not implemented` em runtime); (d) `Ping` é trivial em WABA/IG/MSG (GET `/me?fields=id`); `IsConnected()` em whatsmeow é 1 atomic load. Trade-off: quebra a interface para implementações externas (não há — todas internas); 5 adapters precisam adicionar ~10 LOC cada (~50 LOC total). Sem migration porque a interface é interna ao `core/port`.
+
+- **ADR-0035 — DLQ como stream in-process (audit + metric + log), sem sink externo** [#169]. Decisão: `bus.SubscribeDLQ` consome em `internal/usecase/dlq/consumer.go` que **apenas** escreve audit row + `DLQTotal` metric + `log.Error`. **Não** persiste em tabela `dlq_archive`, **não** envia para S3/OpenSearch. Justificativa: (a) DLQ é para **operação humana** (runbook: "tem msg na DLQ, investigar"), não para replay automático; (b) audit log imutável (Fase 2 carryover) já dá auditoria completa (`action='dlq.event'` com `metadata={channel, msg_id, error}`); (c) `DLQTotal` com label `reason` permite alertas (`rate(DLQTotal[5m]) > 10`); (d) `log.Error` com structured logging vai para Loki/ELK, satisfaz retention de 30 dias. Trade-off: 30 dias é teto (vs S3 = ilimitado); queries complexas (top reasons por tenant) exigem correlacionar com audit log. Sink externo é ADR separado para Fase 10+.
+
+- **ADR-0036 — Webhook dedup cache `sync.Map` + TTL 5min no edge (sem DB lookup)** [#168]. Decisão: `dedupCache sync.Map` in-process com TTL 5min + LRU 100k entries. **Não** usar Redis SETNX, **não** usar `SELECT ... FOR UPDATE` no DB. Justificativa: (a) edge optimization tem que ser O(1) sem I/O — Meta retenta em < 1s; (b) `sync.Map` é lock-free para read-heavy, que é o caso (webhook é read no dedup); (c) LRU + TTL garante memória bounded (100k × 50B ≈ 5MB por instância); (d) DB `ON CONFLICT` (Fase 3 carryover) é **fallback** se cache miss (ex: restart do processo) — não é fonte de verdade. Trade-off: cache perdido em restart (mitigado por ON CONFLICT no DB); não compartilhado entre réplicas (Fase 10+ pode usar Redis shared dedup, mas local é suficiente para scale-out de webhook ingress). Sweeper goroutine tem `defer recover()` e `goleak.VerifyTestMain` (#173).
+
+- **ADR-0037 — Coordinator pool em `session-mode` PGBouncer (não `transaction-mode`)** [#178, Seção 11]. Decisão: `coordinator_pool` configurado com `pgxpool.Config{ConnConfig.RuntimeParams["pool_mode"] = "session"}` ou PGBouncer config com `pool_mode=session` para o role `mez_coordinator` (criar role novo). **Não** usar `transaction-mode` (default PGBouncer). Justificativa: `pg_try_advisory_lock` é **session-scoped** — em `transaction-mode`, PGBouncer pode atribuir 2 statements consecutivos a backends diferentes, fazendo o lock adquirido em S1 ser liberado antes de S2 usar. Documentado em [PG docs §13.3.5](https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS): "advisory locks are session-level". Trade-off: session-mode reduz densidade de conexões (1 conn por coordinator thread ativo); aceitável porque Coordinator tem ~10-50 threads (não 1000s); em K8s, setar `PGOPTIONS: "-c pool_mode=session"` no pod spec. Conexões `appPool` e `platformPool` continuam em transaction-mode (não usam advisory locks).
+
+- **ADR-0038 — `whatsmeow.Manager` LRU eviction por `MEZ_MAX_ACTIVE_TENANTS` (não por memória RSS)** [Fase 4 carryover, formalizado]. Decisão: eviction é por **contagem de tenants ativos**, não por RSS/memória. Justificativa: (a) 1 client whatsmeow ≈ 10-50MB RAM + 1 WebSocket; 100 clients ≈ 1-5GB (cabe num pod de 8GB); (b) contagem é O(1) (`atomic.Int64`), RSS sampling é caro; (c) limite por tenant é **negócio** (sla "100 tenants ativos"); (d) LRU já existe (Fase 4 carryover, `whatsmeow/manager.go:174`); tenant evicted = session salva no `IdentityStore` (não perdida) + reconect on-demand (≤ 2s, transparente). Trade-off: tenant evicted durante uso intenso tem que reconectar; aceitável porque WhatsApp tolera reconnect (já faz diariamente via `reconnect.go`). Memória não é o limiter — é a métrica de **complexidade de gerência** (100 sessions é o máximo que 1 pod consegue coordenar sem GC pauses visíveis).
+
+- **ADR-0039 — `pkg/lifecycle.Runner` phases como único mecanismo de boot/shutdown (substitui `init()` e goroutines globais)** [Fase 8 carryover, formalizado]. Decisão: toda goroutine de longa duração, todo adapter, todo client externo é registrado como `Phase` no `Runner` via `runner.Add(PhaseFunc)`. **Proibido** `init()` que abra goroutines ou conexões; **proibido** `var X = startBackground()`. Justificativa: (a) `init()` é non-deterministic (ordem alfabética de packages), vira fonte de bugs sutis; (b) goroutine global sem owner = impossível fazer graceful shutdown coordenado (D10 da Fase 8); (c) `Runner` provê `SIGTERM → stop em ordem inversa → drain com timeout → exit 0`; (d) testabilidade: `Runner` aceita `WithTimeout`/`WithSkip` para tests. Trade-off: mais cerimônia no boot (cada adapter precisa implementar `PhaseFunc`); ~280 LOC de `pkg/lifecycle` que é puro overhead para single-binary. Aceitável: o overhead é **declarativo** (declarar fases), não **computacional**.
+
+- **ADR-0040 — Bus in-process tipado como substituição de NATS JetStream (carryover Fase 8)** [Fase 8 carryover, formalizado]. Decisão: `internal/adapter/broker/bus.go` implementa `bus.Bus` com channels Go nativos + `safeCall` para recover. **Não** usar NATS, Kafka, RabbitMQ. Justificativa: (a) single-process é premissa (Fase 9) — bus atravessa fronteira in-process; (b) latência: in-process < 1μs vs NATS ~1ms; (c) zero infra nova (alinhado com `AGENTS.md §1.1`); (d) tipos via generics Go 1.22 (`chan T` tipado, não `[]byte`); (e) `safeCall` por subscriber garante panic isolation. Trade-off: bus não atravessa pods (Fase 10+ precisa de NATS ou similar para multi-process; carryover das issues #177-#180); bus em memória perde mensagens em `kill -9` (mitigado por outbox pattern + reconciler C1). Migração futura: trocar implementação atrás da interface `bus.Bus` mantém consumers intactos.
+
+### ADRs de segurança (Sprint 0, Seção 12)
+
+- **ADR-0041 — FailClosed-by-default para security checks** [Sprint 0, Seção 12.7]. Decisão: **toda verificação de segurança é opt-out em dev, opt-in em prod**. Cookie `Secure`, TLS, HSTS, OIDC nonce, entropy check, CSRF, error sanitization são todos default-ON quando `MEZ_ENV=prod` ou `MEZ_ENV` unset + binary não-dev. Issues relacionadas: #131, #140, #142, #143, #145, #146, #151, #153. Justificativa: histórico do projeto mostra que defaults permissivos em código (DREAD ≥ 7.5 no audit 003) viram production-blockers; reverter isso com feature flags é operacionalmente caro. **Manifesto:** security é o default; relaxar é exceção explícita. Trade-off: dev local sem HTTPS precisa `MEZ_ENV=dev`; documentado em `AGENTS.md` e `docs/security/DEV_MODE.md` (NOVO). Implementação: helper `pkg/config.IsProdMode(cfg) bool` que centraliza a lógica (`MEZ_ENV=prod` ou unset + binary tag `prod`); usado em todos os 8 pontos de gate.
+
+- **ADR-0042 — Principal Hydration no session middleware** [Sprint 0, #132, Seção 12.7]. Decisão: o middleware de sessão **hidrata `Principal.Permissions` e `Principal.Roles`** ao carregar a sessão, em vez de delegar a cada handler. Cache in-memory TTL 5min por `(userID, tenantID)` usando `sync.Map` + `singleflight.Group`. Justificativa: (a) `admin.Evaluate` precisa de `Permissions` populado — sem hydration, a chamada sempre nega; (b) cache 5min evita N+1 em loops de admin panel; (c) TTL curto garante que revogação de role propaga em ≤ 5min (aceitável para admin panel); (d) `singleflight.Group` evita thundering herd quando N requests chegam ao mesmo tempo. Trade-off: 1 query extra por session start (otimizada para ≤ 5ms com índice em `role_bindings.user_id`); session start latency aumenta ~3ms p50. Risco: sessão já ativa pós-deploy pode ter `Permissions = nil` (mitigado por flag `MEZ_AUTHZ_STRICT=false` durante 1 release + `MEZ_AUTHZ_ROLLOUT_PCT=10→50→100`).
+
+- **ADR-0043 — Defense-in-Depth RLS + WHERE clause** [Sprint 0, #133 + #137 + #138 + #154, Seção 12.7]. Decisão: **toda query multi-tenant tem DUPLA barreira**: (a) `RunInTenantTx` (RLS via context), E (b) `WHERE tenant_id = $1` explícito na query. Justificativa: (a) RLS já é FORCED (C3 + C4 do audit 003), mas bugs em pool routing podem bypassar (DREAD 9.0 do C5); (b) `WHERE tenant_id = $1` é catch-all que pega o caso degraded; (c) audit row em qualquer query que toque mais de 1 tenant (via `EXPLAIN` instrumentation); (d)符合 defense-in-depth principle do STRIDE. Trade-off: +1 coluna em toda query, +1 índice em cada tabela (já temos); verbosidade do código. Aceitável: o boilerplate fica centralizado em `txRunner.RunInTenantTx` (helper do #133) e em `s3.WithTenantPrefix(...)` (helper do #138); código de handler fica `txRunner.RunInTenantTx(ctx, jwtTenantID, func(txCtx) { h.msgRepo.Get(txCtx, msgID) })` — `msgRepo.Get` recebe o txCtx e adiciona `WHERE tenant_id = $1` automaticamente. Issues cobertas: #133 (IDOR), #137 (SQLi defense-in-depth em restore), #138 (S3 path confusion), #154 (audit query cross-tenant).
+
 ### ADRs roadmap (documentados em Seção 11, **não-execução Fase 9**)
 
 - **ADR-0030 — Capability-based auto-claim com Postgres como coordinator único**. Justificativa: zero infra nova; mesmo binário Docker com role flag (`--role={gateway,relay,whatsmeow-worker,all}`); coordenação via `coordinator_capabilities` table; elástico de verdade. Trade-off: Postgres vira SPOF lógico (mitigado por RPO/RTO ≤ 90s e replicação streaming existente). Alinhado com `AGENTS.md §1.1` (sem Redis/NATS).
@@ -782,12 +899,16 @@ Total: **22 dias úteis** (4-5 semanas solo, ou 2-3 sprints com 2 devs).
 
 - **Auditoria 5-pilares** (origem do plano): conversa com Arquiteto Sênior SMM (junho/2026), 5 pilares: Adapter/Factory, Resiliência/RateLimit, Credenciais, Agendamento, Webhooks/Real-time.
 - **Fase 8 PLAN**: `docs/fase8/PLAN.md` (988 LOC) — base normativa para boot/shutdown phases.
-- **Auditoria de Segurança**: `docs/fase8/FIXES/003_SECURITY_AUDIT.md` (H2 #140, H9 #147) — `nonce` OIDC + SKIP LOCKED.
+- **Auditoria de Segurança**: `docs/fase8/FIXES/003_SECURITY_AUDIT.md` (40 findings: 10 CRITICAL + 15 HIGH + 15 MEDIUM) — `nonce` OIDC, SQLi, IDOR, RLS, auth/authz, concurrency, deps. **Origem do Sprint 0 (Seção 12).**
+- **Plano de Auditoria**: `docs/fase8/FIXES/PLAN_SECURITY_AUDIT.md` — status tracking das 40 findings + fases de remediação.
 - **Auditoria Arquitetural**: `docs/fase8/FIXES/002_ARCHITECTURE_REVIEW.md` (item 1.1) — SKIP LOCKED.
-- **Auditoria DDD-Hexagonal**: `docs/fase8/FIXES/001_DDD_HEXAGONAL_REVIEW.md` — base do `port.Sender`.
+- **Auditoria DDD-Hexagonal**: `docs/fase8/FIXES/001_DDD_HEXAGONAL_REVIEW.md` — base do `port.Sender`; item 3.11 `appQFromCtxOrPool` UNSAFE é base do #133.
+- **PR #108** (`bdee3cd`): commits `cc08aa9`, `38368f4`, `a6ee296`, `bcbb880`, `aba5b9b`, `05d6d7a`, `5fdc0b7`, `4177bf2` — 9 fixes de segurança já em `main` que serão housekeeping-fechados no §12.0.
 - **`docs/plan.md`**: roadmap 0–8; Fase 9 é extensão pós-1.0.
 - **AGENTS.md**: §1 Identidade, §10 Patterns obrigatórios, §1.1 guardrails (sem Redis/NATS/Vault/multi-process).
 - **`mez-go` pai AGENTS**: `/home/user/felipedsvit/mez-go/AGENTS.md` — referência semântica (não porte literal).
+- **Seção 11** (multi-replica): ADRs 0030-0031 + issues #177-#180 — carryover de design para Fase 10+.
+- **Seção 12** (Sprint 0): auditoria de segurança pré-requisito, 20 issues + 9 housekeeping, ADRs 0041-0043.
 
 ---
 
@@ -1208,6 +1329,522 @@ WHERE worker_id = $1
 
 ---
 
-> **Última atualização:** junho/2026 (Seção 11 adicionada — análise de escalabilidade horizontal whatsmeow documentada, execução prevista para Fase 10+).
+## 12. Sprint 0 — Auditoria de segurança (carryover Fase 8) · **pré-requisito**
+
+> **Status:** planejamento · junho/2026 · **pré-requisito dos Sprints 1–5**.
+> **Escopo:** 6 CRITICAL + 9 HIGH (excluindo 1 duplicata) + 3 MEDIUM (excluindo 1 duplicata) + 2 housekeeping (fechar issues já mergeadas em `main`) = **20 issues · ~9-11d solo** (3 sub-sprints) · single commit (squash) por sub-sprint → `main`.
+> **Origem:** `docs/fase8/FIXES/003_SECURITY_AUDIT.md` (auditoria STRIDE+DREAD 5-domínios) — 10 CRITICAL + 15 HIGH + 15 MEDIUM no total; **9 já mergeadas em `main` via `bdee3cd` (PR #108)** sem `Closes` propagado; **20 ainda abertas** (detalhadas abaixo).
+> **Justificativa como pré-requisito (não-execução após Fase 9):** várias issues da Fase 9 (A1, B1, B3, B6, C5) **herdam** os furos que este Sprint 0 fecha — em particular, IDOR via `RunInTenantTx` (#133) é fundação de qualquer handler novo, e admin authorization (#132) é fundação de qualquer endpoint admin novo (#169, #174). Adiar para Fase 10+ reintroduz as mesmas vulnerabilidades nos handlers novos. **Regra:** Sprint 0 não pode ser pulado, mesclado ou postergado.
+> **ADRs novos:** 3 (0041-0043 — FailClosed-by-default, Principal Hydration, Defense-in-Depth RLS).
+
+### 12.0 Housekeeping — Fechar issues já corrigidas em `main` (0.2d)
+
+A squash-merge `bdee3cd` (PR #108, `feat(fase8): merge security audit + process infra`) trouxe 9 fixes de segurança para `main`, mas o `Closes` no body da PR só listou as issues de tracking (`#99..#107`). As 9 issues de segurança referenciadas nos commits (`feat(security #N)`) **continuam abertas** no GitHub. Ações:
+
+| Issue | Commit do fix | Ação |
+|------:|---|---|
+| #129 | `cc08aa9` WebSocket CheckOrigin config-driven | Comentar com `✅ Merged in bdee3cd (commit cc08aa9) — closing.` + label `phase8-security` + fechar |
+| #130 | `38368f4` JWT exp validation | Comentar + fechar |
+| #134 | `a6ee296` Actor de backup via JWT | Comentar + fechar |
+| #136 | `bcbb880` Webhook body nunca vai para log | Comentar + fechar |
+| #139 | `aba5b9b` Sanitize OIDC next | Comentar + fechar |
+| #141 | `05d6d7a` Master key file 0600 | Comentar + fechar |
+| #144 | `38368f4` APIJWTSecret length>=32 | Comentar + fechar |
+| #152 | `5fdc0b7` ReadHeaderTimeout 5s | Comentar + fechar |
+| #156 | `4177bf2` Lockout off-by-one | Comentar + fechar |
+
+**Comando (automatizável):**
+```bash
+for n in 129 130 134 136 139 141 144 152 156; do
+  gh issue comment "$n" --repo felipedsvit/mez-go-mono --body "✅ Already merged in \`bdee3cd\` (PR #108). Commit: \`$(git log --format=%H --grep="security #$n" main | head -1)\`. Closing as completed."
+  gh issue close "$n" --repo felipedsvit/mez-go-mono --reason completed
+done
+```
+
+**Esforço:** 0.2d · **Pré-requisito:** nenhum.
+
+### 12.1 Sub-sprint 0A — Security CRITICAL (3-4d)
+
+> **DoD da seção 0A:** todas as 6 CRITICAL fechadas; 0 findings CRITICAL remanescentes na auditoria; testes de regressão para IDOR/auth/role-editor passam.
+
+#### #131 — S0-C3: Cookie `__Host-mez_admin` sem `Secure: true`
+
+**Arquivos:** `cmd/server/wire.go:313` (nome) + `internal/transport/adminweb/handlers_auth.go:81-89, 151-159` (emissão sem `Secure`)
+
+**Diagnóstico:** prefixo `__Host-` (RFC 6265bis) **exige** `Secure=true`. Browsers modernos ou rejeitam o cookie (auth quebra) ou aceitam em cleartext (sessão sniffável em WiFi de café). ADR 0018 documenta a intenção, mas o código contradiz.
+
+**Ação:**
+1. Adicionar `Secure bool` ao struct de config de sessão (`pkg/config/config.go`), lido de `MEZ_SESSION_COOKIE_SECURE` (default `true` em qualquer build não-dev).
+2. Plumar `Secure` no `handlers_auth.go:81-89` e `151-159` (emissão + refresh).
+3. Honrar `X-Forwarded-Proto` de proxy confiável: se header presente e `https`, setar `Secure=true` independente da config (com `MEZ_TRUSTED_PROXY_CIDR` allowlist).
+4. Boot do `cmd/server/serve`: warning explícito se `Secure=false` em build não-dev (log em `WARN`).
+5. Test: `httptest.NewRecorder` + `http.SetCookie` com `__Host-` rejeita se `Secure=false` no Chromium; validar via `cookie.Valid()` (stdlib).
+
+**Esforço:** 0.3d · **FIX** · **Bloqueado por:** nenhum.
+
+#### #132 — S0-C4: Admin handlers — autenticação sem autorização
+
+**Arquivos:** `internal/transport/adminweb/handlers_users.go:11-87`, `handlers_tenants.go:11-91`, `handlers_roles.go:11-73`, `handlers_audit.go:10-25`, `handlers_backup.go:28-167`, `handlers_reset.go:23-69`
+
+**Diagnóstico:** cada handler chama `principalOrEmpty(r)` mas **nenhum chama `admin.Evaluate(principal, perm, scope)`**. Apenas `RequireAuth` verifica sessão; `Principal.Permissions` e `Principal.Roles` são sempre `nil`. Resultado: qualquer tenant owner de A suspende/edita qualquer tenant/user/role de B.
+
+**Ação:**
+1. Estender `Principal` em `internal/core/port/auth.go`: campos `Permissions []Permission` e `Roles []Role` (preenchidos no hydration do session).
+2. Modificar o **session middleware** (`internal/transport/http/middleware/session.go:42-58`): após carregar `principal.UserID`/`Email`, fazer `roleBindingRepo.ListByUser(ctx, principal.UserID)` → carregar `roles[i].Permissions` → hidratar `Principal.Permissions`. Adicionar TTL 5min em cache in-memory (`sync.Map`) para evitar N+1.
+3. Criar helper `admin.RequireScope(perm Permission, scope Scope) func(http.Handler) http.Handler` em `internal/transport/adminweb/middleware.go` (NOVO). Usa `admin.Evaluate(principal, perm, scope)` (já existe, só não era chamado).
+4. Aplicar em **todos** os 6 arquivos: `RequireScope(admin.PermUserManage, admin.ScopePlatform)` para users/tenants cross-tenant; `RequireScope(admin.PermBackupRun, tenantScope)` para backup; etc.
+5. Audit row por negação: `auth.denied{actor, perm, scope, reason}`.
+6. Test de regressão: tenant A owner tenta `DELETE /admin/tenants/{B}/users` → 403 com audit row; `TestAdmin_Authorization` cobre 6 handlers × 2 cenários (allow/deny) = 12 sub-tests.
+
+**Esforço:** 1.0d · **REWRITE** · **Bloqueado por:** nenhum · **Pré-requisito para:** #169, #174 (Sprint 4/5) e qualquer handler admin novo.
+
+#### #133 — S0-C5: IDOR API REST — handlers não usam `RunInTenantTx`
+
+**Arquivos:** `internal/transport/http/api/handlers.go:89-452`; `internal/transport/http/middleware/bearer.go:62-115`
+
+**Diagnóstico:** o doc-comment em `handlers.go:16` diz "RLS via RunInTenantTx (claim tenant_id do token)" mas nenhum handler chama `txRunner.RunInTenantTx`. Eles chamam `h.convRepo.ListByTenant`, `h.msgRepo.Get`, `h.convRepo.Upsert` direto. O `appQFromCtx` fallback (`db.go:29-34`) usa o pool raw quando não há tx no ctx. **Fundação de qualquer handler novo da Fase 9.**
+
+**Ação:**
+1. Refatorar `internal/transport/http/api/handlers.go` para que **toda função handler** seja embrulhada em `txRunner.RunInTenantTx(ctx, jwtTenantID, func(txCtx) { ... })`. Extrair helper `withTenantTx(h *Handlers, perm Permission) func(http.Handler) http.Handler` que (a) extrai `tenantID` do JWT, (b) abre tx, (c) injeta no `r.Context()`, (d) defer rollback.
+2. Eliminar `appQFromCtx` fallback em `db.go:29-34` (forçar erro se chamado sem tx no ctx). Marcar como `// Deprecated: deve ser substituído por appQFromCtxOrPool` (carryover do DDD-hex 3.11).
+3. Audit row por negação cross-tenant (se handler tentar query com `tenantID != ctxTenantID`): `idor.attempted{actor_tenant, target_tenant, endpoint}`.
+4. Test de regressão: 12 cenários cruzados (tenant A chama endpoint com `tenantID=B` no body/header) → 403/404 em todos. `TestAPI_IDOR_Matrix` cobre `ListMessages`/`PostReaction`/`PatchMessage`/`DeleteMessage`/`ConvAssign`/`ConvResolve` × 2 tenants = 12 sub-tests.
+5. Mover `permitira` de `handlers.go` para `withTenantTx` (centralizar).
+
+**Esforço:** 1.0d · **REWRITE** · **Bloqueado por:** nenhum · **Pré-requisito para:** #162, #165, #166, #167, #176 (todos os handlers novos).
+
+#### #135 — S0-C7: Privilege escalation via role editor
+
+**Arquivos:** `internal/transport/adminweb/handlers_roles.go:11-73`; `internal/usecase/admin/role_service.go:78-145`
+
+**Diagnóstico:** o endpoint de edição de roles permite que um admin crie/edite role com `Scope=Platform` sem verificar permissões. Um `tenant_owner` A consegue criar role `Platform:Super` e dar para si mesmo.
+
+**Ação:**
+1. Em `role_service.Create/Update`: antes de persistir, chamar `admin.Evaluate(caller, admin.PermRoleManage, role.Scope)`. Se `caller.Scope == Tenant` e `role.Scope == Platform` → 403.
+2. Audit row por tentativa: `role.escalation.blocked{actor, role_name, attempted_scope}`.
+3. Validar invariante no DB: `CHECK (scope IN ('platform', 'tenant'))` + trigger que rejeita INSERT/UPDATE se `caller` não tem `PermRoleManage` no scope alvo (defense-in-depth).
+4. Migration `0011_role_scope_check.up.sql`: adicionar CHECK constraint + trigger (cobre race entre check e INSERT).
+5. Test: `tenant_owner` A tenta criar role `Platform:Super` → 403 + audit; `platform_admin` cria mesma role → 200.
+
+**Esforço:** 0.5d · **REWRITE** · **Bloqueado por:** #132 (precisa de `Evaluate` funcionando).
+
+#### #137 — S0-C9: Backup restore aceita `_table` arbitrário (defense-in-depth SQLi)
+
+**Arquivos:** `internal/usecase/backup/restore.go:84-132`; `internal/adapter/repository/postgres/restore_repo.go:45-78`
+
+**Diagnóstico:** `restore.go:84-132` aceita o nome da tabela de um manifest externo. Embora o código atual use um whitelist hardcoded, **defense-in-depth** exige rejeitar nomes fora de uma allowlist explícita (não enumerar dinamicamente do `INFORMATION_SCHEMA`). CWE-89 (SQLi via column/table name).
+
+**Ação:**
+1. Criar `var allowedRestoreTables = map[string]bool{"messages": true, "conversations": true, "contacts": true, "outbound_events": true, "audit_log": true}` em `restore.go:30` (constante).
+2. Em `restore.go:91`, **rejeitar** se `!allowedRestoreTables[tableName]` com erro `ErrInvalidRestoreTable`.
+3. Validar cada coluna em `restore_repo.go:45-78` da mesma forma: allowlist por tabela, **sem** uso de reflection ou string interpolation para column list.
+4. Audit: `backup.restore.invalid_table{table, manifest_id, actor}`.
+5. Test: manifest forjado com `table: "users"` ou `table: "channel_credentials"` → rejeitado; manifest válido → OK.
+
+**Esforço:** 0.3d · **FIX** · **Bloqueado por:** nenhum.
+
+#### #138 — S0-C10: S3 keys/prefixos sem validar `tenantID` (path confusion)
+
+**Arquivos:** `internal/adapter/storage/s3/s3.go:34-67, 89-118`; `internal/adapter/storage/s3/multipart.go:18-49`
+
+**Diagnóstico:** `Put(tenantID, key, data)` aceita `tenantID` e `key` separados. Um handler com `tenantID=A` mas `key="tenants/B/media/..."` consegue escrever no prefixo do tenant B. **Path confusion cross-tenant.**
+
+**Ação:**
+1. Em `s3.go:34-67`: forçar `fullKey = "tenants/" + tenantID + "/" + key` e validar que `strings.HasPrefix(fullKey, "tenants/"+tenantID+"/")` **antes** de assinar a request. Rejeitar com `ErrTenantMismatch` se não bater.
+2. Idem para `Get`, `Delete`, `DeletePrefix`, `UploadStream` em todos os 4 arquivos.
+3. Adicionar métrica `s3_tenant_mismatch_total{operation}` Counter.
+4. Audit: `s3.tenant_mismatch{actor_tenant, attempted_prefix, operation}`.
+5. Test: tenant A chama `Put(tenantA, "../../tenants/B/media/x.png", ...)` → rejeitado; `Put(tenantA, "media/x.png", ...)` → grava em `tenants/A/media/x.png`.
+
+**Esforço:** 0.3d · **FIX** · **Bloqueado por:** nenhum.
+
+**Total Sub-sprint 0A: ~3.4d · 6 issues CRITICAL**
+
+### 12.2 Sub-sprint 0B — Security HIGH (4-5d)
+
+> **DoD da seção 0B:** todas as 9 HIGH (excluindo #147 se confirmado duplicata) fechadas; falhas de OIDC nonce / JWT entropy / CSRF setup / TLS / concurrency cobertas por testes de regressão.
+
+#### #140 — S0-H2: OIDC `nonce` não validado (replay de ID-token)
+
+**Arquivos:** `internal/adapter/idp/oidc/oidc.go:47, 65-79`; `internal/usecase/auth/login.go:160-189`; `internal/adapter/idp/oidc/verifier.go:28-30`
+
+**Diagnóstico:** o callback OIDC não passa `nonce` para `gooidc.Verifier.Verify`, permitindo replay de ID-token capturado. (Este é o fix canônico; **simplifica** a #166 do Sprint 3 — após este fix, a issue #166 vira apenas "persistir refresh token".)
+
+**Ação:**
+1. Em `login.go:160-189`: gerar `nonce := base64.RawURLEncoding.EncodeToString(randBytes(16))`, persistir no `OIDCState` (adicionar campo `Nonce` no struct), incluir no `AuthCodeURL` via `oauth2.SetAuthURLParam("nonce", nonce)`.
+2. Em `login.go` callback: extrair `nonce` do state, passar para `Verifier.Verify(ctx, rawIDToken, gooidc.VerifyNonce(state.Nonce))`.
+3. `verifier.go:28-30`: alterar `Config{ClientID: cfg.ClientID}` para incluir `SupportedSigningAlgs: []string{"RS256"}` (forçar assimétrico; bloqueia HS256 confusion).
+4. Audit row por rejeição: `oidc.nonce.mismatch{state_id, ip}`.
+5. Test: state com `nonce=X` mas ID-token com `nonce=Y` → 401 + audit; state sem nonce + token sem nonce → 401 (rejeitar `nonce=""` em prod, aceitar em dev via flag `MEZ_OIDC_REQUIRE_NONCE`).
+6. **Sincronizar com #166** (Sprint 3): #140 cobre validação; #166 cobre persistência de `refresh_token` + criação de `oidc_tokens` table.
+
+**Esforço:** 0.5d · **FIX** · **Bloqueado por:** nenhum · **Pré-requisito para:** #166 (Sprint 3 fica mais simples).
+
+#### #142 — S0-H6b: JWT secret sem check de length/entropy
+
+**Arquivos:** `internal/transport/http/server/server.go:78-95` (já tem check de `SessionSecret` ≥ 32, falta `APIJWTSecret`); `pkg/config/config.go:140-156`
+
+**Diagnóstico:** #144 (H6 canônico, "APIJWTSecret length>=32") já foi mergeado em `38368f4`. **#142 é uma issue separada** sobre entropy check (não apenas length) — rejeitar segredos com baixa entropia estimada (muitos chars repetidos, all-ASCII-lowercase, etc.).
+
+**Ação:**
+1. Em `server.go:78-95`: além do length check de `APIJWTSecret`, calcular Shannon entropy do secret e rejeitar se `< 3.5` (threshold empírico para segredos aleatórios de 32+ chars).
+2. Helper `pkg/config/entropy.go` (NOVO) com `ShannonEntropy(s string) float64` + testes table-driven (casos: empty, all-same, low-entropy, high-entropy).
+3. Audit: `config.low_entropy{secret_name, length, entropy}` (em dev, log warning; em prod, refuse boot).
+4. Boot check: refuse com erro fatal se `entropy < 3.5 && !devMode`.
+5. Test: `MEZ_API_JWT_SECRET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` (32 chars, entropy=0) → refuse; `MEZ_API_JWT_SECRET=$(openssl rand -base64 32)` → OK.
+
+**Esforço:** 0.3d · **FIX** · **Bloqueado por:** nenhum.
+
+#### #143 — S0-H14b: `ReadHeaderTimeout=0` no `http.Server` (slow-loris)
+
+**Arquivos:** `cmd/server/wire.go:118-134`; `cmd/server/main.go:42-58`
+
+**Diagnóstico:** #152 (H14 canônico: `ReadHeaderTimeout=5s + MaxHeaderBytes=1MiB`) já foi mergeado em `5fdc0b7`. **#143 é uma issue separada** sobre o fallback `0` quando o TLS-terminating proxy não envia `X-Forwarded-Proto` confiável — preciso garantir que o `0` nunca acontece mesmo se o env for unset.
+
+**Ação:**
+1. Em `wire.go:118-134`: se `cfg.HTTP.ReadHeaderTimeout == 0` (unset), aplicar default `5s` antes de criar `http.Server`. Idem para `ReadTimeout`, `WriteTimeout`, `IdleTimeout`.
+2. Helper `pkg/netutil/safeServer(s *http.Server) *http.Server` (NOVO) que normaliza timeouts.
+3. Boot check: refuse se `ReadHeaderTimeout=0 && !devMode` (CWE-400 defense-in-depth).
+4. Test: `cmd/server serve` com `MEZ_HTTP_READ_HEADER_TIMEOUT=` (vazio) → 5s aplicado; com `=0` → refuse.
+5. **Diferenciar de #152:** #152 garante valores positivos no server real; #143 garante que o server é criado com defaults seguros (sem race de "esqueceu de setar").
+
+**Esforço:** 0.2d · **FIX** · **Bloqueado por:** nenhum.
+
+#### #145 — S0-H7: CSRF `/setup` POST sem validação
+
+**Arquivos:** `internal/transport/http/api/handlers_setup.go:38-92`; `internal/transport/http/middleware/csrf.go:18-44`
+
+**Diagnóstico:** o middleware CSRF existe e está wired em `/admin/*` (Fase 5), mas o endpoint `POST /api/setup` (executado **antes** do setup wizard completar) não passa pelo middleware. Atacante com acesso ao DNS (mesmo LAN) pode forçar re-setup do tenant.
+
+**Ação:**
+1. Plumar middleware CSRF em `handlers_setup.go:38`: antes do `decodeJSON`, validar token via `csrf.VerifyToken(r)`.
+2. Para `/setup` (primeira execução, sem cookie ainda): gerar token via `csrf.NewToken()`, setar em cookie `__Host-mez_csrf_setup` (com `Secure=true` + `SameSite=Strict`), exigir que o POST retorne o mesmo token no header `X-CSRF-Token`.
+3. Audit: `setup.csrf.missing{ip, attempt}`.
+4. Test: POST sem token → 403; POST com token mismatch → 403; POST com token válido → 200.
+
+**Esforço:** 0.3d · **FIX** · **Bloqueado por:** nenhum.
+
+#### #146 — S0-H13: Security headers sempre invocados com `secure=false`
+
+**Arquivos:** `internal/transport/http/middleware/secure_headers.go:14-58`
+
+**Diagnóstico:** o middleware `SecureHeaders` existe mas sempre é invocado com `secure=false` em `wire.go`. Resultado: `Strict-Transport-Security` (HSTS) nunca é emitido, `Set-Cookie` flags falham silenciosamente.
+
+**Ação:**
+1. Em `wire.go:118-134`: passar `secure: cfg.HTTP.TLS || cfg.HTTP.BehindTLSProxy` (true se direto TLS ou atrás de proxy confiável).
+2. Helper `pkg/config.IsHTTPSActive(cfg) bool` que checa `cfg.HTTP.TLS || (cfg.HTTP.TrustedProxyCIDR != nil && r.Header.Get("X-Forwarded-Proto") == "https")`.
+3. Test: `secure=true` → response tem `Strict-Transport-Security: max-age=31536000; includeSubDomains`; `secure=false` → header ausente.
+4. Audit: `security_headers.disabled{reason}` em boot se `secure=false` em prod.
+
+**Esforço:** 0.2d · **FIX** · **Bloqueado por:** #151 (mesma config infra).
+
+#### #147 — S0-H2-dup: Investigar e fechar como `duplicate` se for clone de #140
+
+**Diagnóstico:** pelo título e descrição breve, aparenta ser duplicata de #140 (H2 OIDC nonce). Validar abrindo o body e comparando; se idêntico, fechar como `duplicate` com referência `#140`.
+
+**Ação:**
+1. `gh issue view 147 --repo felipedsvit/mez-go-mono --json body,title,labels` para inspecionar.
+2. Se CWE/file/descrição bater com #140 → `gh issue close 147 --reason duplicate --comment "Duplicata de #140 (H2 OIDC nonce)"`
+3. Se diferente, promover para issue independente e re-agendar no Sprint 0B.
+
+**Esforço:** 0.1d · **TRIAGE** · **Bloqueado por:** nenhum.
+
+#### #148 — S0-H5: `RunAsPlatform` audit é best-effort, não atômico
+
+**Arquivos:** `internal/usecase/platform/run_as_platform.go:34-78`; `internal/adapter/repository/postgres/platform_audit.go:18-44`
+
+**Diagnóstico:** `RunAsPlatform(fn)` faz o trabalho + grava audit row em **txs separadas**. Se a tx de trabalho commita mas a audit row falha (deadlock, network blip), o audit é perdido. Conformidade SOC2/LGPD exige atomicidade.
+
+**Ação:**
+1. Em `run_as_platform.go:34-78`: refatorar para abrir **uma tx** que faz `SET LOCAL ROLE mez_platform` + executa `fn(txCtx)` + INSERT na `admin_audit_log` na mesma tx. Commit atômico.
+2. Helper `RunAsPlatformTx(ctx, auditEntry, fn func(ctx) error) error` (renomear o atual para `RunAsPlatform` que mantém compat).
+3. Migration `0012_audit_atomicity.up.sql` (opcional): adicionar `ON DELETE CASCADE` em `admin_audit_log.target_id` para cleanup.
+4. Test: injectar falha no INSERT do audit (mock) → tx de trabalho também rola back; sucesso → ambos persistem.
+
+**Esforço:** 0.5d · **FIX** · **Bloqueado por:** nenhum.
+
+#### #149 — S0-H8+H9+H10: Concorrência — bus `UnsubscribeInbound` race, outbox claim race, drain TOCTOU
+
+**Arquivos:** `internal/adapter/broker/bus.go:124-156` (`UnsubscribeInbound` usa `reflect.Pointer` que é unsafe); `internal/adapter/repository/postgres/outbox.go:131-187` (claim race); `internal/usecase/outbox/relay.go:154-199` (drain TOCTOU)
+
+**Diagnóstico:** três issues de concorrência combinadas (H8 unsubscribe via `reflect.Pointer` é racy; H9 outbox claim — já parcialmente tratado por #159; H10 drain entre `MarkFailed` e persistência de `next_attempt_at`).
+
+**Ação:**
+1. **H8:** substituir `reflect.Pointer` em `bus.go:124-156` por um registry explícito de subscribers com `sync.Mutex` + map `chan ID → *Subscription`; `UnsubscribeInbound(id)` recebe o ID (não o ponteiro).
+2. **H9:** (carryover para #159, mas a parte `BeginTx` é a única peça crítica — confirmar com o Sprint 1 #159).
+3. **H10:** em `relay.go:154-199`, fazer `MarkFailed` em **uma única query** que atualiza `attempts`, `next_attempt_at`, `last_error` no mesmo statement. Eliminar o pattern read-modify-write.
+4. Audit: `bus.unsubscribe.race{listener_id}` (apenas em dev, log warning; em prod é panic via `goleak`).
+5. Test: 100 goroutines fazem `Subscribe/Unsubscribe` simultâneo → zero races (`go test -race`); 2 relays draining mesma row → 1 vê update, outra vê row já claimed (carryover #159).
+
+**Esforço:** 1.0d · **REWRITE** · **Bloqueado por:** nenhum.
+
+#### #150 — S0-H11: `labstack/echo` pulled por dead code (`api/openapi.gen.go`)
+
+**Arquivos:** `api/openapi.gen.go` (gerado, contém import de `github.com/labstack/echo/v4` mas não usa); `go.mod`, `go.sum`
+
+**Diagnóstico:** o gerador `oapi-codegen` injeta imports de Echo como boilerplate, mesmo quando os handlers usam `net/http` puro. Echo vira dep **transitiva** (atualiza em vuln scan, polui SBOM).
+
+**Ação:**
+1. Rodar `make openapi-gen` e inspecionar `api/openapi.gen.go`: se Echo for importado mas não usado, **regenerar com flag correta** (`--generate types,chi-server,spec` sem Echo-specific templates).
+2. Alternativa: substituir Echo-specific server por chi-server (`oapi-codegen` suporta ambos). Ver ADR-0012 (já menciona chi).
+3. Após regenerar, rodar `go mod tidy` + `govulncheck ./...` e confirmar que `github.com/labstack/echo` não aparece em nenhuma dependência.
+4. Test de regressão: `grep -r "labstack/echo" .` retorna 0 hits.
+
+**Esforço:** 0.3d · **FIX** · **Bloqueado por:** nenhum.
+
+#### #151 — S0-H12: Sem TLS termination / sem redirect HTTP→HTTPS
+
+**Arquivos:** `cmd/server/wire.go:118-134`; `pkg/config/config.go:140-180`
+
+**Diagnóstico:** o binário não tem opção de TLS nativo (sempre espera proxy reverso terminar TLS) e não tem redirect HTTP→HTTPS. Em dev é OK; em prod, deploy sem proxy configurado = cleartext.
+
+**Ação:**
+1. Adicionar config `MEZ_HTTP_TLS_CERT_FILE` e `MEZ_HTTP_TLS_KEY_FILE` (paths). Se ambos setados, `http.Server` usa `ListenAndServeTLS` em vez de `ListenAndServe`.
+2. Adicionar middleware `httpsRedirect` (NOVO em `internal/transport/http/middleware/`) que responde `301` em qualquer request HTTP se `cfg.HTTP.ForceHTTPS=true`. Wired apenas quando `cfg.HTTP.ForceHTTPS=true` (default `true` em prod, `false` em dev).
+3. Documentar em `docs/deployment/HTTPS.md` (NOVO): "Recomendamos proxy reverso (Caddy/nginx) para TLS termination em prod. O binário suporta TLS nativo como fallback."
+4. Test: `MEZ_HTTP_TLS_CERT_FILE=test.crt MEZ_HTTP_TLS_KEY_FILE=test.key` + `MEZ_HTTP_FORCE_HTTPS=true` → curl http://localhost:8080/ retorna 301 → https://...; https funciona.
+
+**Esforço:** 0.5d · **FIX** · **Bloqueado por:** nenhum.
+
+**Total Sub-sprint 0B: ~4.4d · 9 issues HIGH (excluindo #147 dup) + 1 triage**
+
+### 12.3 Sub-sprint 0C — Security MEDIUM (1-2d)
+
+> **DoD da seção 0C:** todas as 3 MEDIUM (excluindo #155 dup) fechadas; vazamento de erro interno eliminado; `role_id` usa UUID v7; audit query tem tenant filter default.
+
+#### #153 — S0-M3: API error responses leak internal error strings
+
+**Arquivos:** `internal/transport/http/api/errors.go:18-64`; `internal/transport/adminweb/handlers.go:78-92`
+
+**Diagnóstico:** handlers retornam `err.Error()` direto no body do response. Atacante com tenant válido aprende schema do DB (`pq: relation "mez.users" does not exist`), paths internos, stack traces.
+
+**Ação:**
+1. Criar `internal/transport/http/api/errors.go` com `WriteError(w http.ResponseWriter, status int, code string, err error)` que:
+   - Loga `err.Error()` server-side com `slog.Error`.
+   - Retorna apenas `{"error": code, "request_id": "<uuid>"}` no body.
+   - Audit row para 5xx (não 4xx) com `metadata={request_id, code}`.
+2. Catálogo de codes: `code_not_found`, `code_validation`, `code_unauthorized`, `code_forbidden`, `code_internal`, `code_rate_limited`, `code_idor`, `code_tenant_mismatch`.
+3. Substituir **todos** os `http.Error(w, err.Error(), ...)` por `WriteError(...)`.
+4. Adicionar `request_id` middleware (NOVO) que gera UUID por request e injeta no `r.Context()`.
+5. Test: `pq: relation ...` em `err.Error()` → response não contém "relation"; log server-side contém.
+
+**Esforço:** 0.5d · **FIX** · **Bloqueado por:** nenhum.
+
+#### #154 — S0-M8: Audit log query sem tenant filter default
+
+**Arquivos:** `internal/adapter/repository/postgres/audit_query.go:18-67`; `internal/transport/adminweb/handlers_audit.go:10-25`
+
+**Diagnóstico:** a query `ListAuditLog` aceita `tenantID` opcional. Se omitido, retorna **todos** os tenants. Admin tenant-level consegue ler audit de outros tenants (combinado com #132 IDOR admin).
+
+**Ação:**
+1. Em `audit_query.go:18-67`: exigir `tenantID` (não mais opcional). Se vier `nil/empty` E `caller.Scope == Tenant` → erro `ErrTenantRequired`.
+2. Admin platform pode passar `nil` para listar cross-tenant (intencional); requer `Evaluate(principal, PermAuditRead, ScopePlatform)`.
+3. Adicionar `LIMIT 1000` default (anti-DoS).
+4. Audit: `audit.cross_tenant_read{actor, count_returned}` (apenas em prod, sampling 1%).
+5. Test: `tenant_owner A` chama `GET /admin/audit?tenant_id=B` → 403; omite `tenant_id` → 403; `platform_admin` sem filtro → 200 + lista cross-tenant.
+
+**Esforço:** 0.3d · **FIX** · **Bloqueado por:** #132 (precisa de `Evaluate`).
+
+#### #155 — S0-M10-dup: Investigar e fechar como `duplicate` se for clone de #156
+
+**Diagnóstico:** #156 (lockout off-by-one) já foi mergeado em `4177bf2`. #155 tem título similar ("Lockout off-by-one") — provável duplicata.
+
+**Ação:**
+1. `gh issue view 155 --repo felipedsvit/mez-go-mono --json body,title,labels` para inspecionar.
+2. Se idêntico a #156 → `gh issue close 155 --reason duplicate --comment "Duplicata de #156 (lockout off-by-one)"`
+3. Se diferente, promover.
+
+**Esforço:** 0.1d · **TRIAGE** · **Bloqueado por:** nenhum.
+
+#### #157 — S0-M15: Role ID via `time.Now().UnixNano()` (previsível/collisivo)
+
+**Arquivos:** `internal/usecase/admin/role_service.go:34-58`; `migrations/0013_role_id_uuidv7.up.sql` (NOVO)
+
+**Diagnóstico:** `CreateRole` usa `time.Now().UnixNano()` como ID. Em escala, colisões são raras mas possíveis; principal problema é **previsibilidade** (atacante pode enumerar roles de um tenant adivinhando IDs).
+
+**Ação:**
+1. Migration `0013_role_id_uuidv7.up.sql`: `ALTER TABLE roles ALTER COLUMN id TYPE UUID USING id::text::UUID;` + `ALTER TABLE roles ALTER COLUMN id SET DEFAULT uuidv7();`. (Requer extensão `pg_uuidv7` ou função custom `uuid_generate_v7`.)
+2. Se `pg_uuidv7` não disponível, criar função PL/pgSQL `uuid_generate_v7()` baseada em `gen_random_uuid()` + timestamp prefix.
+3. Atualizar `role_service.go:34-58` para usar o default do DB (não gerar no Go).
+4. Test: criar 10k roles em loop → IDs são monotônicos mas imprevisíveis (`uuidv7()` garante isso).
+5. Adicionar índice em `(tenant_id, id)` se ainda não houver.
+
+**Esforço:** 0.5d · **FIX** · **Bloqueado por:** nenhum.
+
+**Total Sub-sprint 0C: ~1.4d · 3 issues MEDIUM (excluindo #155 dup) + 1 triage**
+
+### 12.4 Dependências Sprint 0 → Sprint 1-5
+
+```
+Sprint 0A  ──►  #132 (Principal hydration)  ──►  Sprint 1-5 admin endpoints (#169, #174)
+            ──►  #133 (RunInTenantTx)        ──►  Sprint 1-5 handlers novos (#162, #165, #166, #167, #176)
+
+Sprint 0B  ──►  #140 (OIDC nonce)            ──►  Sprint 3 #166 (simplifica: só persistência)
+            ──►  #151 (TLS) + #146 (headers)  ──►  Sprint 1 #162 (webhook handler)
+
+Sprint 0C  ──►  (independente, no final)
+```
+
+**Regra de gate:** Sprint 1 só inicia após Sprint 0A fechado. Sprints 0B e 0C podem correr em paralelo (com dev único em 0B; 0C é rápido).
+
+### 12.5 Estimativa ajustada (Sprint 0)
+
+| Categoria | LOC | Dias |
+|---|---:|---:|
+| **CRITICAL** (6 issues, Sub-sprint 0A) | ~1.500 | 3.4 |
+| **HIGH** (9 issues, Sub-sprint 0B) | ~1.800 | 4.4 |
+| **MEDIUM** (3 issues, Sub-sprint 0C) | ~600 | 1.4 |
+| **Housekeeping** (9 issues, §12.0) | ~50 | 0.2 |
+| **Tests** (regressão + novos) | ~1.200 | 1.0 |
+| **Buffer** (15% para races intermitentes, deps, integration) | — | 1.5 |
+| **Total Sprint 0** | **~5.150 LOC** | **~11.9d** |
+
+Combinado com os 22d dos Sprints 1-5: **~34d solo** (6-7 sprints) ou 2-3 sprints com 2 devs.
+
+### 12.6 Definition of Done (Sprint 0)
+
+#### Funcional
+
+- [ ] **§12.0 (housekeeping)**: 9 issues (#129, #130, #134, #136, #139, #141, #144, #152, #156) fechadas com `reason=completed` + comment linkando o commit.
+- [ ] **#131**: cookie `__Host-mez_admin` rejeitado se `Secure=false` (test em `cookie_test.go`).
+- [ ] **#132**: 6 admin handlers com `RequireScope` aplicado; `TestAdmin_Authorization` 12 sub-tests verde.
+- [ ] **#133**: 12 cenários `TestAPI_IDOR_Matrix` verde; `appQFromCtx` removido.
+- [ ] **#135**: `TestRole_Escalation_Blocked` verde; CHECK constraint em `roles.scope` aplicado.
+- [ ] **#137**: manifest forjado rejeitado; allowlist explícita.
+- [ ] **#138**: `TestS3_TenantMismatch` verde; path confusion cross-tenant impossível.
+- [ ] **#140**: state com nonce mismatch → 401; `verifier.go` força `RS256`; #166 simplificada.
+- [ ] **#142**: `MEZ_API_JWT_SECRET=aaaa…(32)` rejeitado; `TestConfig_Entropy` 5 sub-tests verde.
+- [ ] **#143**: defaults aplicados se env unset; `MEZ_HTTP_READ_HEADER_TIMEOUT=0` em prod → refuse boot.
+- [ ] **#145**: POST `/api/setup` sem CSRF token → 403; com token válido → 200.
+- [ ] **#146**: HSTS emitido em `secure=true`; warning em boot se `secure=false` em prod.
+- [ ] **#147**: fechada como `duplicate` (ou promovida se diferente).
+- [ ] **#148**: `TestPlatform_Audit_Atomic` verde; falha de audit rollbacka trabalho.
+- [ ] **#149**: 100 goroutines Subscribe/Unsubscribe simultâneo → 0 races; H10 unificado em uma query.
+- [ ] **#150**: `grep -r "labstack/echo" .` retorna 0; `govulncheck` sem findings de Echo.
+- [ ] **#151**: TLS nativo funcional; `MEZ_HTTP_FORCE_HTTPS=true` redireciona 301.
+- [ ] **#153**: nenhum `err.Error()` em body de response; `request_id` em todo response.
+- [ ] **#154**: `GET /admin/audit` sem `tenant_id` por tenant owner → 403; `LIMIT 1000` default.
+- [ ] **#155**: fechada como `duplicate` (ou promovida).
+- [ ] **#157**: 10k roles criadas → IDs monotônicos + imprevisíveis; UUID v7 default.
+
+#### Não-funcional
+
+- [ ] `go test -race -shuffle=on -count=1 -timeout 180s ./...` verde.
+- [ ] `go test -tags=integration -race -timeout 30s ./...` verde (testes de RLS fail-closed + IDOR + audit atomic).
+- [ ] `govulncheck ./...` sem findings de HIGH/CRITICAL.
+- [ ] `gofmt -l` vazio.
+- [ ] Coverage: ≥ 85% nos packages alterados (`middleware/{authz,csrf,secure_headers,session}`, `transport/http/api`, `usecase/admin`, `usecase/platform`, `adapter/storage/s3`).
+- [ ] `make openapi-gen && git diff --exit-code api/openapi.gen.go` verde (se #150 regenerar).
+- [ ] `cmd/server/serve` boot em ≤ 5s (sem regressão vs. Fase 8).
+
+#### Operacional
+
+- [ ] `cmd/server/serve` shutdown em ≤ 15s (sem regressão).
+- [ ] Chaos test: `tests/chaos/idor_test.go` (NOVO) — tenant A tenta acessar recurso de B → 403 + audit; 1000 tentativas não causam OOM ou log flood.
+- [ ] `docs/security/AUDIT_HISTORY.md` (NOVO) consolida auditoria 003 (Fase 8) + correções Sprint 0.
+- [ ] README §23 atualizado: Sprint 0 marcado como merged; §25 "audit trail" linka `docs/security/AUDIT_HISTORY.md`.
+
+### 12.7 ADRs novos (Sprint 0)
+
+- **ADR-0041 — FailClosed-by-default para security checks** [#131, #140, #142, #143, #145, #146, #151, #153]. Decisão: **toda verificação de segurança é opt-out em dev, opt-in em prod**. Cookie `Secure`, TLS, HSTS, OIDC nonce, entropy check, CSRF, error sanitization são todos default-ON quando `MEZ_ENV=prod` ou `MEZ_ENV` unset + binary não-dev. Justificativa: histórico do projeto mostra que defaults permissivos em código (DREAD ≥ 7.5) viram production-blockers; reverter isso com feature flags é operacionalmente caro. **Manifesto:** security é o default; relaxar é exceção explícita. Trade-off: dev local sem HTTPS precisa `MEZ_ENV=dev`; documentado em `AGENTS.md` e `docs/security/DEV_MODE.md` (NOVO).
+
+- **ADR-0042 — Principal Hydration no session middleware** [#132]. Decisão: o middleware de sessão **hidrata `Principal.Permissions` e `Principal.Roles`** ao carregar a sessão, em vez de delegar a cada handler. Cache in-memory TTL 5min por `(userID, tenantID)`. Justificativa: (a) `Evaluate` precisa de `Permissions` populado — sem hydration, a chamada sempre nega; (b) cache 5min evita N+1 em loops de admin panel; (c) TTL curto garante que revogação de role propaga em ≤ 5min (aceitável para admin panel); (d) sync.Map + `singleflight.Group` evita thundering herd. Trade-off: 1 query extra por session start (otimizada para ≤ 5ms com índice em `role_bindings.user_id`); session start latency aumenta ~3ms p50.
+
+- **ADR-0043 — Defense-in-Depth RLS + WHERE clause** [#133, #137, #138, #154]. Decisão: **toda query multi-tenant tem DUPLA barreira**: (a) `RunInTenantTx` (RLS via context), E (b) `WHERE tenant_id = $1` explícito. Justificativa: (a) RLS já é FORCED (C3 + C4 do audit), mas bugs em pool routing podem bypassar (DREAD 9.0 do C5); (b) `WHERE tenant_id = $1` é catch-all que pega o caso degraded; (c) audit row em qualquer query que toque mais de 1 tenant (via `EXPLAIN` instrumentation). Trade-off: +1 coluna em toda query, +1 índice em cada tabela (já temos); verbosidade do código. Aceitável: o boilerplate fica centralizado em `txRunner.RunInTenantTx` (helper do #133).
+
+### 12.8 Riscos específicos do Sprint 0
+
+| # | Risco | Probabilidade | Impacto | Mitigação |
+|---|-------|---:|---:|---|
+| R-S0-1 | #132 (Principal hydration) causa regressão em sessão já ativa pós-deploy | Média | Alto | Manter `Principal.Permissions = nil` se cache miss + flag `MEZ_AUTHZ_STRICT=false` (default true em prod) durante 1 sprint; rollout gradual via `MEZ_AUTHZ_ROLLOUT_PCT=10→50→100` |
+| R-S0-2 | #133 (RunInTenantTx) quebra handler que depende de `appQFromCtx` raw | Alta | Médio | Manter `appQFromCtx` por 1 release com `// Deprecated`; telemetria de uso (`metric appQFromCtxLegacyUse`) |
+| R-S0-3 | #140 (OIDC nonce) bloqueia login de IdP que não emite nonce | Baixa | Alto | Feature flag `MEZ_OIDC_REQUIRE_NONCE` (default `true` em prod, `false` em dev); documentar em `docs/security/OIDC_IDP_COMPAT.md` |
+| R-S0-4 | #149 (concorrência) introduz deadlock se migration de lock-ordering não for feita | Média | Alto | Test com `go test -race -count=100`; chaos test `tests/chaos/concurrency_test.go` (NOVO) com 1000 goroutines; rollout flag `MEZ_BUS_LOCK_ORDERING_V2=true` |
+| R-S0-5 | Housekeeping (#129-#156 fechamento) gera confusão se alguém reverter o commit | Baixa | Médio | Fechar issues com `reason=completed`; se reverter, reabrir manualmente (audit trail no GitHub) |
+| R-S0-6 | UUID v7 (#157) requer extensão `pg_uuidv7` não disponível no RDS | Média | Médio | Fallback: PL/pgSQL function `uuid_generate_v7()` que combina `gen_random_uuid()` + timestamp; testar em CI com `postgres:15` e `postgres:16` |
+
+### 12.9 Sequência de execução (timeline Sprint 0)
+
+```
+Sprint 0 (11.9d) — Auditoria de segurança (PRÉ-REQUISITO)
+├── Day 0.2: §12.0 Housekeeping (fechar #129, #130, #134, #136, #139, #141, #144, #152, #156)
+├── Sub-sprint 0A (3.4d) — CRITICAL
+│   ├── Day 0.5: #131 (cookie Secure)
+│   ├── Day 1.0: #132 (admin authorization) [começa, #135/#154 dependem]
+│   ├── Day 1.0: #133 (IDOR RunInTenantTx) [paralelo]
+│   ├── Day 0.5: #135 (role escalation)
+│   ├── Day 0.3: #137 (restore _table allowlist)
+│   └── Day 0.3: #138 (S3 tenant path confusion)
+├── Sub-sprint 0B (4.4d) — HIGH [paralelo com 0A se 2 devs]
+│   ├── Day 0.5: #140 (OIDC nonce)
+│   ├── Day 0.3: #142 (JWT entropy)
+│   ├── Day 0.2: #143 (ReadHeaderTimeout default)
+│   ├── Day 0.3: #145 (CSRF setup)
+│   ├── Day 0.2: #146 (HSTS secure=true)
+│   ├── Day 0.1: #147 (triage dup)
+│   ├── Day 0.5: #148 (RunAsPlatform atomic)
+│   ├── Day 1.0: #149 (concorrência)
+│   ├── Day 0.3: #150 (Echo dead code)
+│   └── Day 0.5: #151 (TLS native)
+└── Sub-sprint 0C (1.4d) — MEDIUM
+    ├── Day 0.5: #153 (error sanitization)
+    ├── Day 0.3: #154 (audit tenant filter)
+    ├── Day 0.1: #155 (triage dup)
+    └── Day 0.5: #157 (UUID v7)
+```
+
+**Single commit (squash) por sub-sprint → `main`:**
+- `fase9-s0a-squash`: Sprint 0A
+- `fase9-s0b-squash`: Sprint 0B
+- `fase9-s0c-squash`: Sprint 0C (incluindo housekeeping + fechamento das 9 stale issues)
+
+**PR body template (cada sub-sprint):**
+```markdown
+## Sprint 0X — Auditoria de segurança
+
+**Issues fechadas (Closes):** #131, #132, #133, #135, #137, #138 (exemplo 0A)
+
+### Correções
+- [lista bullets com referência a commit + arquivo]
+
+### Testes
+- `TestAdmin_Authorization` (12 sub-tests) verde
+- `TestAPI_IDOR_Matrix` (12 sub-tests) verde
+- [etc]
+
+### ADRs formais
+- ADR-0041 (FailClosed-by-default)
+- ADR-0042 (Principal Hydration)
+- ADR-0043 (Defense-in-Depth RLS)
+
+### DoD
+- [ ] Sprint 0X DoD items marcados
+- [ ] govulncheck verde
+- [ ] boot ≤ 5s
+```
+
+### 12.10 Não-objetivos do Sprint 0 (explícitos)
+
+- **WAF / rate limit por IP** — fora do escopo (proxy reverso resolve).
+- **Bug bounty / responsible disclosure** — pós-1.0.
+- **Penetration test externo** — pós-1.0 (antes do release público).
+- **Certificações (SOC2, ISO 27001)** — roadmap longo prazo.
+- **Migração completa para Vault Transit** — fora do guardrail; `LocalSealer` é o canônico (Fase 7).
+- **CSRF em endpoints de webhooks** — Meta/Telegram enviam via POST server-to-server; CSRF não aplica.
+- **Rate limit em `/api/setup`** — não-incluído (1 chamada esperada; brute-force coberto por #151 se exposto).
+- **Auditoria de dependências (`govulncheck`) rodando em CI** — já está na Fase 7 (`make govulncheck`); Sprint 0 não adiciona.
+
+### 12.11 Referências Sprint 0
+
+- **Auditoria canônica:** `docs/fase8/FIXES/003_SECURITY_AUDIT.md` (todos os 40 findings).
+- **Plano de auditoria:** `docs/fase8/FIXES/PLAN_SECURITY_AUDIT.md`.
+- **PLan Fase 8:** `docs/fase8/PLAN.md` (carryover C12 boot determinístico + audit log).
+- **AGENTS.md:** §1.1 guardrails, §10 patterns, **§Regra 8 (CRITICAL)** RLS fail-closed.
+- **DDD-hex review:** `docs/fase8/FIXES/001_DDD_HEXAGONAL_REVIEW.md` (item 3.11 `appQFromCtxOrPool` UNSAFE — base do #133).
+- **PR #108** (`bdee3cd`): commits `cc08aa9`, `38368f4`, `a6ee296`, `bcbb880`, `aba5b9b`, `05d6d7a`, `5fdc0b7`, `4177bf2` — fixes já em `main` que serão housekeeping-fechados.
+
+---
+
+> **Última atualização:** junho/2026 (Sprint 0 adicionado — auditoria de segurança como pré-requisito dos Sprints 1–5; 3 ADRs novos 0041-0043; housekeeping das 9 issues stale).
 > **Mantenedor:** Felipe D. Svit (mez-go-mono).
 > **Próxima revisão:** ao final de cada sprint, com checkmark nos DoD.

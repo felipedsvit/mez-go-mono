@@ -10,6 +10,7 @@
 //  7. Ingestor + Router
 //  8. OutboxRepo + SenderRegistry + Relay
 //  9. InboundEventsRepo + Reconciler
+//
 // 10. SenderService + StatusConsumer
 // 11. Whatsmeow Manager
 // 12. Webhook handlers (Meta + Telegram)
@@ -97,7 +98,7 @@ type AppContext struct {
 	StatusConsumer *ucmessaging.StatusConsumer
 
 	// Fase 7: envelope encryption
-	Keyring  *ucsecrets.Keyring
+	Keyring   *ucsecrets.Keyring
 	CredsRepo *postgres.ChannelCredentialsRepo
 
 	// Usecases
@@ -366,10 +367,20 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 			Resolver: sessionSvc,
 			Cookie:   "__Host-mez_admin",
 			TTL:      sessionTTL,
+			// Issue #131 (Sprint 0A C3 audit): Secure=true default em prod.
+			// Override via MEZ_SESSION_COOKIE_SECURE=false em dev local sem HTTPS.
+			Secure: cfg.SessionCookieSecure,
+			// Issue #132 (Sprint 0A C4 audit) + ADR-0042: hydrator plugável.
+			// Por enquanto nil → Principal.Permissions fica nil → RequireScope
+			// nega fail-closed. Implementação concreta (DBPrincipalHydrator
+			// em usecase/admin) requer RoleBindingRepo que ainda não existe;
+			// ver #132 R-S0-1 para rollout gradual.
+			// Hydrator: adminmw.NewCachedPrincipalHydrator(...),
 		},
 		sessionStore, nil,
 		ratelimit.New(10.0/60.0, 10.0),
 		tenantUC, userUC, roleUC, auditUC,
+		adminRepos.Audit,
 	)
 	// Fase 6: injeta backup service e admin verifier (usado para confirmar
 	// senha no reset). Se backupSvc for nil, rotas de backup/reset não
@@ -399,6 +410,10 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		QRCodeProvider:  waManager,
 		BackupService:   backupSvc,
 		AdminVerifier:   loginSvc, // Reset usa LoginLocal para confirmar senha
+		// Issue #133 (Sprint 0A C5 audit): TxRunner para RLS fail-closed.
+		// Se nil, handlers API rodam sem tx (legacy). Em prod, deve ser
+		// setado — o appPool já implementa TxRunner.
+		TxRunner: nil, // wire em PR subsequente; ver #133 R-S0-2
 	})
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
@@ -415,6 +430,15 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		// Cookies) cabem em < 4 KiB; 1 MiB protege contra heap blow-up
 		// por headers gigantes.
 		MaxHeaderBytes: 1 << 20,
+		// Issue #151 (H12 audit, Sprint 0B): TLS nativo opcional. Se
+		// MEZ_HTTP_TLS_CERT_FILE + _KEY_FILE estão setados, ListenAndServeTLS
+		// é usado em vez de ListenAndServe. Em prod recomenda-se proxy
+		// reverso; isto é fallback.
+	}
+	// Issue #151: se TLS nativo setado, ListenAndServeTLS; senão plain.
+	tlsEnabled := cfg.HTTPTLSCertFile != "" && cfg.HTTPTLSKeyFile != ""
+	if tlsEnabled {
+		srv.TLSConfig = nil // usa default (TLS 1.2+)
 	}
 
 	return &AppContext{
@@ -423,7 +447,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		ConvRepo: convRepo, MsgRepo: msgRepo, TenantRepo: tenantRepo,
 		SenderRegistry: senderRegistry, SenderService: senderSvc, ListService: listSvc,
 		StatusConsumer: statusConsumer,
-		Keyring: keyring, CredsRepo: credsRepo,
+		Keyring:        keyring, CredsRepo: credsRepo,
 		Ingestor: ingestor, Router: routerSvc, Relay: relay, Reconciler: reconciler,
 		BackupService: backupSvc, Store: store, AdminVerifier: loginSvc,
 		AdminServer: adminSrv,
@@ -441,7 +465,16 @@ func runWithGracefulShutdown(ctx context.Context, app *AppContext) error {
 	// Goroutine: HTTP server.
 	go func() {
 		app.Log.Info().Str("addr", app.Cfg.HTTPAddr).Msg("http: listening")
-		if err := app.HTTPServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		// Issue #151 (H12 audit, Sprint 0B): TLS nativo opcional.
+		// Se cert+key setados, ListenAndServeTLS; senão plain.
+		var err error
+		if app.Cfg.HTTPTLSCertFile != "" && app.Cfg.HTTPTLSKeyFile != "" {
+			app.Log.Info().Str("cert", app.Cfg.HTTPTLSCertFile).Msg("http: TLS enabled")
+			err = app.HTTPServer.ListenAndServeTLS(app.Cfg.HTTPTLSCertFile, app.Cfg.HTTPTLSKeyFile)
+		} else {
+			err = app.HTTPServer.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("http: %w", err)
 		}
 	}()

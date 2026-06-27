@@ -7,7 +7,17 @@ import (
 )
 
 type Config struct {
-	HTTPAddr           string `mapstructure:"http_addr"`
+	HTTPAddr string `mapstructure:"http_addr"`
+	// HTTPTLSCertFile + HTTPTLSKeyFile (opcional): se ambos setados,
+	// o server usa ListenAndServeTLS em vez de ListenAndServe. Issue
+	// #151 (Sprint 0B H12): TLS nativo como fallback quando não há
+	// proxy reverso na frente. Em prod recomenda-se proxy (Caddy/nginx)
+	// mas o binário suporta TLS direto.
+	HTTPTLSCertFile string `mapstructure:"http_tls_cert_file"`
+	HTTPTLSKeyFile  string `mapstructure:"http_tls_key_file"`
+	// HTTPForceHTTPS: se true, middleware retorna 301 em requests HTTP
+	// plain quando TLS está ativo (via flag ou proxy). Issue #151.
+	HTTPForceHTTPS     bool   `mapstructure:"http_force_https"`
 	DatabaseURL        string `mapstructure:"database_url"`
 	MigrateDBURL       string `mapstructure:"migrate_database_url"`
 	PlatformDBURL      string `mapstructure:"platform_database_url"`
@@ -46,6 +56,10 @@ type Config struct {
 	// WSTrustedProxy: honra X-Forwarded-Origin/-Proto. Apenas se
 	// houver reverse proxy controlado na frente.
 	WSTrustedProxy bool `mapstructure:"ws_trusted_proxy"`
+	// SessionCookieSecure: flag Secure do cookie de sessão. Issue #131
+	// (Sprint 0A C3 audit): prefixo __Host- exige Secure=true (RFC 6265bis).
+	// Default true em prod, false em dev (testcontainers sem HTTPS).
+	SessionCookieSecure bool `mapstructure:"session_cookie_secure"`
 	// Fase 10 (#177): app-level config removido de env vars.
 	// Use /admin/settings (system_settings table) em vez de env.
 }
@@ -69,6 +83,7 @@ func Load() (Config, error) {
 	v.SetDefault("session_ttl", "24h")
 	v.SetDefault("reconcile_batch", 100)
 	v.SetDefault("outbox_batch", 32)
+	v.SetDefault("session_cookie_secure", true) // issue #131 — __Host- exige Secure
 
 	cfg := Config{}
 	if err := v.Unmarshal(&cfg); err != nil {
@@ -117,6 +132,10 @@ const minAPISecretLen = 32
 //
 // Issue #130 (C2) + #144 (H6): exige MEZ_API_JWT_SECRET com tamanho
 // mínimo de 32 bytes e rejeita o literal dev conhecido.
+//
+// Issue #142 (H6b, Sprint 0B): além de length, exige Shannon entropy
+// >= MinEntropyBits (3.5) para rejeitar segredos previsíveis (all-same,
+// padrões repetitivos, low-variety).
 func (c Config) ValidateServe() error {
 	if c.SessionSecret == "" {
 		return fmt.Errorf("MEZ_SESSION_SECRET is required for serve")
@@ -126,6 +145,11 @@ func (c Config) ValidateServe() error {
 	}
 	if c.APIJWTSecret == devAPISecretPlaceholder {
 		return fmt.Errorf("MEZ_API_JWT_SECRET is set to the dev placeholder literal; replace with a real secret (>= %d bytes)", minAPISecretLen)
+	}
+	// Issue #142: entropy check adicional
+	entropy := ShannonEntropy(c.APIJWTSecret)
+	if entropy < MinEntropyBits {
+		return fmt.Errorf("MEZ_API_JWT_SECRET entropy too low (%.2f bits < %.2f min); generate with `openssl rand -base64 32`", entropy, MinEntropyBits)
 	}
 	return nil
 }

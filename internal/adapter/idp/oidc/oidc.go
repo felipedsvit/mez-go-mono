@@ -62,6 +62,17 @@ func (c *Client) AuthCodeURL(state, codeChallenge string) string {
 	)
 }
 
+// AuthCodeURLWithNonce inclui o nonce no AuthCodeURL. IdP deve ecoar o
+// mesmo nonce no claim `nonce` do ID-token; verificação no callback
+// via gooidc.VerifyNonce. Issue #147 (H2 audit, Sprint 0B).
+func (c *Client) AuthCodeURLWithNonce(state, codeChallenge, nonce string) string {
+	return c.oauth.AuthCodeURL(state,
+		oauth2.SetAuthURLParam("code_challenge", codeChallenge),
+		oauth2.SetAuthURLParam("code_challenge_method", "S256"),
+		oauth2.SetAuthURLParam("nonce", nonce),
+	)
+}
+
 func (c *Client) Exchange(ctx context.Context, code, codeVerifier string) (string, error) {
 	token, err := c.oauth.Exchange(ctx, code,
 		oauth2.SetAuthURLParam("code_verifier", codeVerifier),

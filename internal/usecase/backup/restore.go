@@ -34,6 +34,38 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 )
 
+// ErrInvalidRestoreTable é retornado quando o NDJSON do manifest referencia
+// uma tabela fora da allowlist de backup.
+//
+// Issue #137 (Sprint 0A C9 audit, DREAD 7.0): defense-in-depth contra SQLi
+// via column/table name em restore forjado. Mesmo que o código atual use
+// só nomes hardcoded, validamos explicitamente para garantir que um
+// manifest malicioso não consiga executar SQL em tabelas sensíveis
+// (channel_credentials, admin_audit_log, system_settings).
+var ErrInvalidRestoreTable = errors.New("backup: table not in allowlist")
+
+// allowedRestoreTables é o subset de backupableTables que pode ser
+// restaurado. channel_credentials e whatsapp_session_keys ficam fora
+// (contêm material criptográfico que deve ser rotacionado, não
+// restaurado — risco de revogar KEK acidentalmente).
+//
+// Issue #137 (C9).
+var allowedRestoreTables = map[string]bool{
+	"contacts":              true,
+	"conversations":         true,
+	"messages":              true,
+	"inbound_events":        true,
+	"outbound_events":       true,
+	"whatsapp_account_state": true,
+	"whatsapp_history":      true,
+}
+
+// IsAllowedRestoreTable retorna true se tableName pode ser alvo de
+// restore. Usado em restore.go para rejeitar manifest forjado.
+func IsAllowedRestoreTable(tableName string) bool {
+	return allowedRestoreTables[tableName]
+}
+
 // RestoreRequest é o input do restore.
 type RestoreRequest struct {
 	TenantID string
@@ -200,6 +232,14 @@ func (s *Service) runRestore(job *Job, req RestoreRequest, manifest *Manifest, c
 		tableName, _ := rec["_table"].(string)
 		if tableName == "" {
 			tableName = inferTableName(rec)
+		}
+		// Issue #137 (C9 audit, Sprint 0A): reject manifest forjado com
+		// table fora da allowlist. Defense-in-depth: mesmo que o código
+		// monte o INSERT seguro, nome de tabela arbitrário é vetor de
+		// SQLi via reflection ou string interpolation futura.
+		if tableName != "" && !IsAllowedRestoreTable(tableName) {
+			s.markFailed(job, fmt.Errorf("%w: %q", ErrInvalidRestoreTable, tableName))
+			return
 		}
 		if tableName == "" {
 			s.markFailed(job, fmt.Errorf("ndjson: registro sem tabela identificável"))

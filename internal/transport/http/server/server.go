@@ -54,6 +54,10 @@ type Services struct {
 	// se nil, os endpoints de backup retornam 503.
 	BackupService   *ucbackup.Service
 	AdminVerifier   ucbackup.AdminVerifier
+	// TxRunner (issue #133 Sprint 0A C5 audit): embrulha cada request
+	// da API em RunInTenantTx para garantir RLS fail-closed. Pode ser
+	// nil em testes (legacy behavior); em prod é obrigatório.
+	TxRunner        port.TxRunner
 }
 
 // New cria o http.Handler com todas as rotas montadas.
@@ -88,7 +92,7 @@ func New(svc Services) http.Handler {
 	}
 	apiMw := apimw.BearerAuth(apimw.BearerAuthConfig{Secret: svc.JWTSecret}, svc.Log)
 
-	apiH := api.New(svc.Log, svc.ConvRepo, svc.MsgRepo, svc.TenantRepo, svc.SenderService, svc.ListService, svc.SenderRegistry, svc.QRCodeProvider)
+	apiH := api.New(svc.Log, svc.ConvRepo, svc.MsgRepo, svc.TenantRepo, svc.SenderService, svc.ListService, svc.SenderRegistry, svc.QRCodeProvider, svc.TxRunner)
 	var backupH *api.BackupHandlers
 	if svc.BackupService != nil {
 		backupH = api.NewBackupHandlers(svc.BackupService, svc.AdminVerifier)
