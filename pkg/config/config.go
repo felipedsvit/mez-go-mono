@@ -164,10 +164,6 @@ const minAPISecretLen = 32
 // Issue #142 (H6b, Sprint 0B): além de length, exige Shannon entropy
 // >= MinEntropyBits (3.5) para rejeitar segredos previsíveis (all-same,
 // padrões repetitivos, low-variety).
-//
-// Issue #143 (H14b): rejeita timeouts do http.Server inválidos.
-// `MEZ_HTTP_READ_HEADER_TIMEOUT=0` (ou vazio/unparseable) é fail-closed
-// (defesa-em-profundidade contra slow-loris).
 func (c Config) ValidateServe() error {
 	if c.SessionSecret == "" {
 		return fmt.Errorf("MEZ_SESSION_SECRET is required for serve")
