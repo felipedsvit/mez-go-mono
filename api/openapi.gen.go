@@ -176,27 +176,42 @@ func (e OutboundMessageType) Valid() bool {
 	}
 }
 
+// Defines values for QRCodeResponseProvider.
+const (
+	QRCodeResponseProviderWhatsmeow QRCodeResponseProvider = "whatsmeow"
+)
+
+// Valid indicates whether the value is a known member of the QRCodeResponseProvider enum.
+func (e QRCodeResponseProvider) Valid() bool {
+	switch e {
+	case QRCodeResponseProviderWhatsmeow:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ChannelHealthParamsChannel.
 const (
-	Instagram   ChannelHealthParamsChannel = "instagram"
-	Messenger   ChannelHealthParamsChannel = "messenger"
-	TelegramBot ChannelHealthParamsChannel = "telegram_bot"
-	Waba        ChannelHealthParamsChannel = "waba"
-	Whatsmeow   ChannelHealthParamsChannel = "whatsmeow"
+	ChannelHealthParamsChannelInstagram   ChannelHealthParamsChannel = "instagram"
+	ChannelHealthParamsChannelMessenger   ChannelHealthParamsChannel = "messenger"
+	ChannelHealthParamsChannelTelegramBot ChannelHealthParamsChannel = "telegram_bot"
+	ChannelHealthParamsChannelWaba        ChannelHealthParamsChannel = "waba"
+	ChannelHealthParamsChannelWhatsmeow   ChannelHealthParamsChannel = "whatsmeow"
 )
 
 // Valid indicates whether the value is a known member of the ChannelHealthParamsChannel enum.
 func (e ChannelHealthParamsChannel) Valid() bool {
 	switch e {
-	case Instagram:
+	case ChannelHealthParamsChannelInstagram:
 		return true
-	case Messenger:
+	case ChannelHealthParamsChannelMessenger:
 		return true
-	case TelegramBot:
+	case ChannelHealthParamsChannelTelegramBot:
 		return true
-	case Waba:
+	case ChannelHealthParamsChannelWaba:
 		return true
-	case Whatsmeow:
+	case ChannelHealthParamsChannelWhatsmeow:
 		return true
 	default:
 		return false
@@ -319,6 +334,18 @@ type OutboundMessageSent struct {
 	Status    *string             `json:"status,omitempty"`
 }
 
+// QRCodeResponse defines model for QRCodeResponse.
+type QRCodeResponse struct {
+	Provider *QRCodeResponseProvider `json:"provider,omitempty"`
+
+	// Qr QR code string (base64-friendly)
+	Qr     *string             `json:"qr,omitempty"`
+	Tenant *openapi_types.UUID `json:"tenant,omitempty"`
+}
+
+// QRCodeResponseProvider defines model for QRCodeResponse.Provider.
+type QRCodeResponseProvider string
+
 // ReactionRequest defines model for ReactionRequest.
 type ReactionRequest struct {
 	Channel          string  `json:"channel"`
@@ -383,7 +410,10 @@ type ReceiveTelegramWebhookJSONRequestBody = TelegramUpdate
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// Health of a channel (Fase 3 - registry-driven)
+	// Get the current WhatsMeow QR code for pairing (Fase 4)
+	// (GET /api/channels/whatsmeow/qrcode)
+	WhatsmeowQRCode(ctx echo.Context) error
+	// Health of a channel (Fase 4: whatsmeow é real, não stub)
 	// (GET /api/channels/{channel}/health)
 	ChannelHealth(ctx echo.Context, channel ChannelHealthParamsChannel) error
 	// List conversations of the current tenant
@@ -430,6 +460,17 @@ type ServerInterface interface {
 // ServerInterfaceWrapper converts echo contexts to parameters.
 type ServerInterfaceWrapper struct {
 	Handler ServerInterface
+}
+
+// WhatsmeowQRCode converts echo context to params.
+func (w *ServerInterfaceWrapper) WhatsmeowQRCode(ctx echo.Context) error {
+	var err error
+
+	ctx.Set(string(BearerAuthScopes), []string{})
+
+	// Invoke the callback with all the unmarshaled arguments
+	err = w.Handler.WhatsmeowQRCode(ctx)
+	return err
 }
 
 // ChannelHealth converts echo context to params.
@@ -688,6 +729,7 @@ func RegisterHandlersWithOptions(router EchoRouter, si ServerInterface, options 
 		Handler: si,
 	}
 
+	router.GET(options.BaseURL+"/api/channels/whatsmeow/qrcode", wrapper.WhatsmeowQRCode, options.OperationMiddlewares["whatsmeowQRCode"]...)
 	router.GET(options.BaseURL+"/api/channels/:channel/health", wrapper.ChannelHealth, options.OperationMiddlewares["channelHealth"]...)
 	router.GET(options.BaseURL+"/api/conversations", wrapper.ListConversations, options.OperationMiddlewares["listConversations"]...)
 	router.POST(options.BaseURL+"/api/conversations/:id/assign", wrapper.AssignConversation, options.OperationMiddlewares["assignConversation"]...)

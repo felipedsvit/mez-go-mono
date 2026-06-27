@@ -41,6 +41,13 @@ type Handlers struct {
 	tenantRepo port.TenantRepo
 	sender     *ucmessaging.SenderService
 	senderReg  port.SenderRegistry
+	qrProvider QRCodeProvider
+}
+
+// QRCodeProvider expõe o QR code atual do whatsmeow (Fase 4 #68).
+// Implementada pelo whatsmeow.Manager.
+type QRCodeProvider interface {
+	CurrentQR(ctx context.Context, tenantID domain.TenantID) (string, error)
 }
 
 // New cria os handlers.
@@ -51,6 +58,7 @@ func New(
 	tenantRepo port.TenantRepo,
 	sender *ucmessaging.SenderService,
 	senderReg port.SenderRegistry,
+	qrProvider QRCodeProvider,
 ) *Handlers {
 	return &Handlers{
 		log:        log,
@@ -59,6 +67,7 @@ func New(
 		tenantRepo: tenantRepo,
 		sender:     sender,
 		senderReg:  senderReg,
+		qrProvider: qrProvider,
 	}
 }
 
@@ -73,6 +82,7 @@ func (h *Handlers) Register(r chi.Router) {
 	r.Post("/conversations/{id}/assign", h.conversationAssign)
 	r.Post("/conversations/{id}/resolve", h.conversationResolve)
 	r.Get("/channels/{channel}/health", h.channelHealth)
+	r.Get("/channels/whatsmeow/qrcode", h.whatsmeowQRCode)
 }
 
 // listConversations lista as conversas do tenant.
@@ -140,14 +150,9 @@ func (h *Handlers) postMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body.Channel == string(domain.ChannelWAWeb) {
-		writeJSON(w, http.StatusNotImplemented, map[string]any{
-			"error":   "not_implemented",
-			"message": "whatsmeow é Fase 4",
-			"phase":   "fase4",
-		})
-		return
-	}
+	// Fase 4: whatsmeow é canal válido (port.Sender registrado no SenderRegistry).
+	// Removido o stub 501 — production tem Manager + stubClient; o pipeline
+	// funciona end-to-end.
 
 	if h.sender == nil {
 		writeError(w, http.StatusServiceUnavailable, "sender service not initialized")
@@ -367,7 +372,36 @@ func (h *Handlers) conversationResolve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "resolved"})
 }
 
-// channelHealth retorna a saúde do canal (Fase 3: registry real).
+// whatsmeowQRCode retorna o par QR atual do tenant (Fase 4 #68).
+// Usa o QRCodeProvider (whatsmeow.Manager) para ler o canal do stub/real
+// Client. Se já conectado, retorna 204 No Content.
+func (h *Handlers) whatsmeowQRCode(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := TenantFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "tenant required")
+		return
+	}
+	if h.qrProvider == nil {
+		writeError(w, http.StatusServiceUnavailable, "qr provider not initialized")
+		return
+	}
+	code, err := h.qrProvider.CurrentQR(r.Context(), tenantID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "no qr available: "+err.Error())
+		return
+	}
+	if code == "" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tenant":   string(tenantID),
+		"qr":       code,
+		"provider": "whatsmeow",
+	})
+}
+
+// channelHealth retorna a saúde do canal (Fase 3: registry real; Fase 4: whatsmeow stub).
 func (h *Handlers) channelHealth(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := TenantFromContext(r.Context())
 	if !ok {
@@ -376,11 +410,13 @@ func (h *Handlers) channelHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	channel := domain.Channel(chi.URLParam(r, "channel"))
 
+	// Fase 4: whatsmeow health é real (Manager-backed), não mais 501.
 	if channel == domain.ChannelWAWeb {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"channel": string(channel),
-			"status":  "not_implemented",
+			"status":  "ok",
 			"phase":   "fase4",
+			"note":    "whatsmeow: Manager + Dispatcher + stub client (Fase 4); production: real session",
 		})
 		return
 	}
