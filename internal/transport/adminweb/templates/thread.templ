@@ -1,0 +1,94 @@
+package templates
+
+// ThreadData é a prop para /app/conversations/{id} (thread de mensagens).
+type ThreadData struct {
+	Page     PageData
+	Conv     ThreadConv
+	Messages []ThreadMessage
+	WSURL    string
+}
+
+// ThreadConv é a conversa exibida no header da thread.
+type ThreadConv struct {
+	ID        string
+	Channel   string
+	PeerID    string
+	State     string
+	Assignee  string
+	QueueID   string
+}
+
+// ThreadMessage é uma mensagem renderizada na thread.
+type ThreadMessage struct {
+	ID        string
+	Direction string // "in" | "out"
+	Type      string
+	Text      string
+	Timestamp string
+}
+
+templ Thread(d ThreadData) {
+	@Layout("Thread", d.Page) {
+		<div class="page-header">
+			<h1>{ d.Conv.PeerID }</h1>
+			<a href="/app/conversations" class="btn btn-sm btn-secondary">← Inbox</a>
+		</div>
+		<article class="card">
+			<header>
+				<strong>{ d.Conv.PeerID }</strong> · <code>{ d.Conv.Channel }</code>
+				@threadStateBadge(d.Conv.State)
+			</header>
+			<small>
+				Agent: { d.Conv.Assignee }
+				if d.Conv.QueueID != "" {
+					· Queue: <code>{ d.Conv.QueueID }</code>
+				}
+			</small>
+		</article>
+		<h3>Messages</h3>
+		<div class="thread">
+			if len(d.Messages) == 0 {
+				<p><em>No messages in this conversation.</em></p>
+			} else {
+				for _, m := range d.Messages {
+					<article class={ "msg", "msg-" + m.Direction }>
+						<small>{ m.Timestamp } · { m.Direction } · { m.Type }</small>
+						<div>
+							if m.Text != "" {
+								{ m.Text }
+							} else {
+								<em>[{ m.Type }]</em>
+							}
+						</div>
+					</article>
+				}
+			}
+		</div>
+		<div class="card">
+			<h3>Send message</h3>
+			<form method="POST" action={ templ.SafeURL("/app/conversations/" + d.Conv.ID + "/messages") }>
+				@CSRFInput(d.Page.CSRFToken)
+				<input type="hidden" name="channel" value={ d.Conv.Channel }/>
+				<input type="hidden" name="contact_id" value={ d.Conv.PeerID }/>
+				<div class="form-group">
+					<textarea name="body" required rows="3"></textarea>
+				</div>
+				<button type="submit" class="btn btn-primary">Send</button>
+			</form>
+		</div>
+		if d.WSURL != "" {
+			<div hx-ext="ws" ws-connect={ d.WSURL }></div>
+		}
+	}
+}
+
+func threadStateBadge(state string) templ.Component {
+	switch state {
+	case "open":
+		return templ.Raw(` <span class="badge badge-active">em atendimento</span>`)
+	case "pending":
+		return templ.Raw(` <span class="badge badge-invited">na fila</span>`)
+	default:
+		return templ.Raw(` <span class="badge badge-disabled">encerrada</span>`)
+	}
+}

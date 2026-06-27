@@ -1,0 +1,113 @@
+package templates
+
+import "github.com/felipedsvit/mez-go-mono/internal/core/admin"
+
+// UserRow é uma linha da tabela de usuários (substitui map[string]any).
+type UserRow struct {
+	ID     string
+	Email  string
+	Name   string
+	Status admin.UserStatus
+}
+
+// UsersData é a prop tipada para a página /admin/users.
+type UsersData struct {
+	Page  PageData
+	Users []UserRow
+}
+
+templ Users(d UsersData) {
+	@Layout("Users", d.Page) {
+		<div class="page-header">
+			<h1>Users</h1>
+			<a href="/admin/users/new" class="btn btn-primary">Invite User</a>
+		</div>
+		<div class="card">
+			if len(d.Users) == 0 {
+				<p><em>No users yet.</em></p>
+			} else {
+				<table>
+					<thead>
+						<tr>
+							<th>Email</th>
+							<th>Name</th>
+							<th>Status</th>
+							<th>Actions</th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, u := range d.Users {
+							<tr>
+								<td><a href={ templ.SafeURL("/admin/users/" + u.ID) }>{ u.Email }</a></td>
+								<td>{ u.Name }</td>
+								<td>@statusBadge(u.Status)</td>
+								<td>
+									<form method="POST" action={ templ.SafeURL("/admin/users/" + u.ID + "/status") } style="display:inline">
+										@CSRFInput(d.Page.CSRFToken)
+										if u.Status == admin.UserStatusActive {
+											<input type="hidden" name="status" value="disabled"/>
+											<button type="submit" class="btn btn-sm btn-danger">Disable</button>
+										} else {
+											<input type="hidden" name="status" value="active"/>
+											<button type="submit" class="btn btn-sm btn-primary">Enable</button>
+										}
+									</form>
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+	}
+}
+
+// UserNewData é a prop para /admin/users/new (convite).
+type UserNewData struct {
+	Page  PageData
+	Roles []admin.Role
+}
+
+templ UserNew(d UserNewData) {
+	@Layout("Invite User", d.Page) {
+		<h1>Invite User</h1>
+		<div class="card" style="max-width: 480px;">
+			<form method="POST" action="/admin/users">
+				@CSRFInput(d.Page.CSRFToken)
+				<div class="form-group">
+					<label for="email">Email</label>
+					<input type="email" id="email" name="email" required/>
+				</div>
+				<div class="form-group">
+					<label for="name">Name</label>
+					<input type="text" id="name" name="name" required/>
+				</div>
+				<div class="form-group">
+					<label for="role_id">Role</label>
+					<select id="role_id" name="role_id" required>
+						for _, r := range d.Roles {
+							<option value={ string(r.ID) }>{ r.Name } ({ string(r.Scope) })</option>
+						}
+					</select>
+				</div>
+				<button type="submit" class="btn btn-primary">Send Invite</button>
+			</form>
+		</div>
+	}
+}
+
+// statusBadge devolve a classe CSS conforme o status do usuário.
+func statusBadge(s admin.UserStatus) templ.Component {
+	return templ.Raw(`<span class="badge ` + userStatusClass(s) + `">` + string(s) + `</span>`)
+}
+
+func userStatusClass(s admin.UserStatus) string {
+	switch s {
+	case admin.UserStatusActive:
+		return "badge-active"
+	case admin.UserStatusDisabled:
+		return "badge-disabled"
+	default:
+		return "badge-invited"
+	}
+}

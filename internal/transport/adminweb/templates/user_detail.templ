@@ -1,0 +1,88 @@
+package templates
+
+import "github.com/felipedsvit/mez-go-mono/internal/core/admin"
+
+// UserDetailData é a prop para /admin/users/{id}.
+type UserDetailData struct {
+	Page     PageData
+	User     admin.AdminUser
+	Bindings []admin.RoleBinding
+	Roles    []admin.Role
+	TempPassword string
+}
+
+templ UserDetail(d UserDetailData) {
+	@Layout(d.User.Email, d.Page) {
+		<hgroup>
+			<h1>{ d.User.Email }</h1>
+			<p>{ d.User.Name } · <code>{ string(d.User.ID) }</code></p>
+		</hgroup>
+		if d.TempPassword != "" {
+			<article class="card" data-testid="temp-password-card">
+				<header><strong>Senha temporária</strong> (mostrada uma única vez)</header>
+				<p><code data-testid="temp-password">{ d.TempPassword }</code></p>
+				<small>Compartilhe com a pessoa por um canal seguro.</small>
+			</article>
+		}
+		<div class="card-grid">
+			<article class="card">
+				<h3>Status</h3>
+				if d.User.Status == admin.UserStatusActive {
+					<p><span class="badge badge-active">ativo</span></p>
+				} else if d.User.Status == admin.UserStatusDisabled {
+					<p><span class="badge badge-disabled">desativado</span></p>
+				} else {
+					<p><span class="badge badge-invited">convidado</span></p>
+				}
+			</article>
+			<article class="card">
+				<h3>Auth</h3>
+				<p>{ d.User.AuthKind }</p>
+			</article>
+		</div>
+		<div class="card">
+			<h2>Roles</h2>
+			if len(d.Bindings) == 0 {
+				<p><em>No roles assigned.</em></p>
+			} else {
+				<table>
+					<thead>
+						<tr><th>Role</th><th>Tenant</th><th></th></tr>
+					</thead>
+					<tbody>
+						for _, b := range d.Bindings {
+							<tr>
+								<td><code>{ b.RoleID }</code></td>
+								<td>
+									if b.TenantID != "" {
+										{ b.TenantID }
+									} else {
+										<em>platform</em>
+									}
+								</td>
+								<td>
+									<form method="POST" action={ templ.SafeURL("/admin/users/" + string(d.User.ID) + "/roles/" + string(b.RoleID) + "/revoke") } style="margin:0;">
+										@CSRFInput(d.Page.CSRFToken)
+										<button type="submit" class="btn btn-sm btn-secondary">remove</button>
+									</form>
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+		<div class="card">
+			<h2>Actions</h2>
+			<form method="POST" action={ templ.SafeURL("/admin/users/" + string(d.User.ID) + "/status") }>
+				@CSRFInput(d.Page.CSRFToken)
+				if d.User.Status == admin.UserStatusDisabled {
+					<button type="submit" class="btn btn-primary">Reativar usuário</button>
+				} else {
+					<button type="submit" class="btn btn-danger" hx-confirm="Confirmar alteração de status?">Desativar usuário</button>
+				}
+			</form>
+		</div>
+		<p style="margin-top:1rem;"><a href="/admin/users">← back to list</a></p>
+	}
+}

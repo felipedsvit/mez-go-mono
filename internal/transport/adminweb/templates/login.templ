@@ -1,0 +1,31 @@
+package templates
+
+// Login renderiza o formulário de login (GET /admin/login). CSRF token
+// lido do cookie XSRF-TOKEN; OIDCEnabled controla o link SSO.
+templ Login(p PageData, oidcEnabled bool) {
+	@Layout("Login", p) {
+		<div class="login-box">
+			<div class="card">
+				<h1 class="text-center">Login</h1>
+				@ErrorBanner(p.Error)
+				<form method="POST" action="/admin/login">
+					@CSRFInput(p.CSRFToken)
+					<div class="form-group">
+						<label for="email">Email</label>
+						<input type="email" id="email" name="email" required/>
+					</div>
+					<div class="form-group">
+						<label for="password">Password</label>
+						<input type="password" id="password" name="password" required/>
+					</div>
+					<button type="submit" class="btn btn-primary" style="width:100%">Sign In</button>
+				</form>
+				if oidcEnabled {
+					<div class="text-center mt-10">
+						<a href="/admin/auth/oidc/start" class="btn btn-secondary">Sign In with SSO</a>
+					</div>
+				}
+			</div>
+		</div>
+	}
+}

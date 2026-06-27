@@ -1,0 +1,36 @@
+package templates
+
+templ Dashboard(p PageData) {
+	@Layout("Dashboard", p) {
+		<h1>Dashboard</h1>
+		<div class="card">
+			<p>Welcome, { p.Principal.Email }!</p>
+			<div class="card-grid">
+				if p.HasPerm("tenants:read") {
+					<a href="/admin/tenants" class="card" style="display:block;text-decoration:none;color:inherit">
+						<h3>Tenants</h3>
+						<p>Manage tenants</p>
+					</a>
+				}
+				if p.HasPerm("users:read") {
+					<a href="/admin/users" class="card" style="display:block;text-decoration:none;color:inherit">
+						<h3>Users</h3>
+						<p>Manage users</p>
+					</a>
+				}
+				if p.HasPerm("roles:read") {
+					<a href="/admin/roles" class="card" style="display:block;text-decoration:none;color:inherit">
+						<h3>Roles</h3>
+						<p>Manage roles &amp; permissions</p>
+					</a>
+				}
+				if p.HasPerm("audit:read") {
+					<a href="/admin/audit" class="card" style="display:block;text-decoration:none;color:inherit">
+						<h3>Audit Log</h3>
+						<p>View audit trail</p>
+					</a>
+				}
+			</div>
+		</div>
+	}
+}

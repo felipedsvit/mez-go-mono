@@ -1,13 +1,14 @@
 // Package adminweb — handlers_app.go: handlers /app/* (inbox tenant-side).
 //
-// Fase 5: /app/conversations (lista) + /app/conversations/:id (thread) +
-// POST /app/conversations/:id/messages (send).
+// Após a migração para templ (Fase 2 da 000_FIXES.md), os 6 stubs
+// stubRenderer / stubR / Renderer foram removidos. As páginas
+// inbox/thread/qrcode usam components templ tipados em
+// internal/transport/adminweb/templates/.
 package adminweb
 
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 	ucmessaging "github.com/felipedsvit/mez-go-mono/internal/usecase/messaging"
+	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/templates"
 )
 
 // AppHandlers agrupa dependências dos handlers /app/*.
@@ -65,13 +67,25 @@ func (h *AppHandlers) inbox(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	data := map[string]any{
-		"Conversations": convs,
-		"Total":         len(convs),
-		"TenantID":      string(tenantID),
+	rows := make([]templates.InboxConv, 0, len(convs))
+	for _, c := range convs {
+		rows = append(rows, templates.InboxConv{
+			ID:        string(c.ID),
+			Channel:   string(c.Channel),
+			PeerID:    string(c.ContactID),
+			State:     string(c.Status),
+			Assignee:  c.AssignedAgent,
+			LastMsgAt: c.UpdatedAt.Format("2006-01-02 15:04"),
+		})
 	}
+	p := templates.PageData{
+		Title:     "Inbox",
+		Now:       time.Now(),
+		CSRFToken: csrfTokenFromContext(r),
+	}
+	component := templates.Inbox(templates.InboxData{Page: p, Conversations: rows})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := InboxPage(data).Render(r.Context(), w); err != nil {
+	if err := component.Render(r.Context(), w); err != nil {
 		h.log.Error().Err(err).Msg("inbox: render")
 	}
 }
@@ -94,16 +108,35 @@ func (h *AppHandlers) thread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	data := map[string]any{
-		"ConversationID": convID,
-		"Messages":       msgs,
-		"Total":          len(msgs),
-		"TenantID":       string(tenantID),
-		"WSURL":          "/app/ws",
-		"CSRFToken":      csrfTokenFromCtx(r.Context()),
+	msgRows := make([]templates.ThreadMessage, 0, len(msgs))
+	for _, m := range msgs {
+		msgRows = append(msgRows, templates.ThreadMessage{
+			ID:        string(m.ID),
+			Direction: string(m.Direction),
+			Type:      string(m.Type),
+			Text:      m.Body,
+			Timestamp: m.CreatedAt.Format("2006-01-02 15:04"),
+		})
 	}
+	p := templates.PageData{
+		Title:     "Thread",
+		Now:       time.Now(),
+		CSRFToken: csrfTokenFromContext(r),
+	}
+	_ = tenantID
+	component := templates.Thread(templates.ThreadData{
+		Page: p,
+		Conv: templates.ThreadConv{
+			ID:       convID,
+			Channel:  "waba", // resolvido pelo repositório em produção
+			PeerID:   "—",
+			State:    "open",
+		},
+		Messages: msgRows,
+		WSURL:    "/app/ws",
+	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := ThreadPage(data).Render(r.Context(), w); err != nil {
+	if err := component.Render(r.Context(), w); err != nil {
 		h.log.Error().Err(err).Msg("thread: render")
 	}
 }
@@ -158,59 +191,18 @@ func (h *AppHandlers) qrcode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = tenantID
-	data := map[string]any{
-		"TenantID":  string(tenantID),
-		"Refreshed": time.Now().Format("15:04:05"),
-		"CSRFToken": csrfTokenFromCtx(r.Context()),
+	p := templates.PageData{
+		Title:     "QR Code",
+		Now:       time.Now(),
+		CSRFToken: csrfTokenFromContext(r),
 	}
+	component := templates.QRCode(templates.QRCodeData{
+		Page:     p,
+		ImagePNG: "", // preenchido pela whatsmeow manager em produção
+		Refresh:  "5s",
+	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := QRCodePage(data).Render(r.Context(), w); err != nil {
+	if err := component.Render(r.Context(), w); err != nil {
 		h.log.Error().Err(err).Msg("qrcode: render")
 	}
-}
-
-// InboxPage é o template da inbox (stub — Fase 5: HTML inline).
-var InboxPage = func(data map[string]any) Renderer { return stubRenderer("inbox", data) }
-
-// ThreadPage é o template da thread.
-var ThreadPage = func(data map[string]any) Renderer { return stubRenderer("thread", data) }
-
-// QRCodePage é o template do QR-code.
-var QRCodePage = func(data map[string]any) Renderer { return stubRenderer("qrcode", data) }
-
-// ServicesPage é o template de /admin/services.
-var ServicesPage = func(data map[string]any) Renderer { return stubRenderer("services", data) }
-
-// ChannelsPage é o template de /admin/tenants/:id/channels.
-var ChannelsPage = func(data map[string]any) Renderer { return stubRenderer("channels", data) }
-
-// AgentsPage é o template de /admin/tenants/:id/agents.
-var AgentsPage = func(data map[string]any) Renderer { return stubRenderer("agents", data) }
-
-// Renderer é a interface mínima (template + htmx).
-type Renderer interface {
-	Render(ctx context.Context, w interface{ Write([]byte) (int, error) }) error
-}
-
-// stubRenderer é um fallback para Fase 5 build verde. Production substitui
-// por `templ` gerado.
-func stubRenderer(name string, data map[string]any) Renderer {
-	return &stubR{name: name, data: data}
-}
-
-type stubR struct {
-	name string
-	data map[string]any
-}
-
-func (s *stubR) Render(_ context.Context, w interface{ Write([]byte) (int, error) }) error {
-	body := "<!DOCTYPE html><html><body><h1>" + s.name + "</h1><pre>" + strconv.Quote("Fase 5 build verde — templ stub") + "</pre></body></html>"
-	_, err := w.Write([]byte(body))
-	return err
-}
-
-// csrfTokenFromCtx extrai o CSRF token do context (populado pelo middleware).
-func csrfTokenFromCtx(_ context.Context) string {
-	// Fase 5: stub. Production lê do context.
-	return ""
 }

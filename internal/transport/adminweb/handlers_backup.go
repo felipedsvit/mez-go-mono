@@ -1,14 +1,14 @@
 // Package adminweb — handlers_backup.go: UI de backup/restore por tenant (#86).
 //
 // Páginas:
-//   - GET  /admin/tenants/{id}/backup         → formulário
+//   - GET  /admin/tenants/{id}/backup         → formulário + lista de backups
 //   - POST /admin/tenants/{id}/backup         → inicia export
 //   - GET  /admin/tenants/{id}/backup/status  → fragmento htmx (poll 2s)
 //   - GET  /admin/tenants/{id}/backup/list    → lista de backups existentes no S3
 //   - POST /admin/tenants/{id}/restore        → inicia restore (form com backup_id)
 //
-// UX: htmx poll a cada 2s do status do job. CSRF token injetado no PageData
-// pelo middleware e incluído nos forms.
+// UX: htmx poll a cada 2s do status do job. CSRF token injetado via
+// csrfTokenFromContext e incluído nos forms via @CSRFInput.
 
 package adminweb
 
@@ -23,34 +23,39 @@ import (
 	cdomain "github.com/felipedsvit/mez-go-mono/internal/core/admin"
 	ucadmin "github.com/felipedsvit/mez-go-mono/internal/usecase/admin"
 	ucbackup "github.com/felipedsvit/mez-go-mono/internal/usecase/backup"
+	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/templates"
 )
 
 func (s *Server) handleBackupPage(w http.ResponseWriter, r *http.Request) {
 	tenantID := chi.URLParam(r, "id")
-	principal := principalOrEmpty(r)
+	p := s.basePageData(r)
+	p.Title = "Backup — " + tenantID
 
-	// Lista backups existentes do S3.
 	backups, _ := s.listBackupsForTenant(r.Context(), tenantID)
 
-	data := PageData{
-		Title:     "Backup — " + tenantID,
-		Principal: principal,
-		Now:       time.Now(),
-		Data: map[string]any{
-			"TenantID": tenantID,
-			"Backups":  backups,
-		},
+	data := templates.BackupData{
+		Page:     p,
+		TenantID: tenantID,
+		Backups:  backups,
 	}
-	s.renderPage(w, "backup.html", data)
+	// Se vier job_id na query, inclui o status do job em andamento.
+	if jobID := r.URL.Query().Get("job_id"); jobID != "" {
+		if job, err := s.backup.Job(jobID); err == nil {
+			v := jobToView(job)
+			data.Job = &v
+		}
+	}
+	s.renderTempl(w, templates.Backup(data))
 }
 
 func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 	tenantID := chi.URLParam(r, "id")
-	principal := principalOrEmpty(r)
+	p := s.basePageData(r)
+	p.Title = "Backup — " + tenantID
 
 	actor := ucadmin.Actor{
-		ID:    principal.UserID,
-		Email: principal.Email,
+		ID:    p.Principal.UserID,
+		Email: p.Principal.Email,
 		IP:    r.RemoteAddr,
 	}
 	res, err := s.backup.Export(r.Context(), ucbackup.ExportRequest{
@@ -59,18 +64,11 @@ func (s *Server) handleBackupStart(w http.ResponseWriter, r *http.Request) {
 		IncludeMedia: true,
 	})
 	if err != nil {
-		data := PageData{
-			Title:     "Backup — " + tenantID,
-			Principal: principal,
-			Now:       time.Now(),
-			Error:     "Erro ao iniciar backup: " + err.Error(),
-			Data:      map[string]any{"TenantID": tenantID},
-		}
-		s.renderPage(w, "backup.html", data)
+		p.Error = "Erro ao iniciar backup: " + err.Error()
+		s.renderTempl(w, templates.Backup(templates.BackupData{Page: p, TenantID: tenantID}))
 		return
 	}
 
-	// Redireciona para a página de status (htmx poll).
 	s.redirect(w, r, fmt.Sprintf("/admin/tenants/%s/backup?job_id=%s&backup_id=%s",
 		tenantID, res.JobID, res.BackupID))
 }
@@ -87,33 +85,28 @@ func (s *Server) handleBackupStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Renderiza fragmento (apenas content do template, sem base).
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.render.Render(w, s.tpls, "backup_status.html", job); err != nil {
-		s.log.Error().Err(err).Msg("render backup status")
-		http.Error(w, "render error", http.StatusInternalServerError)
-	}
+	// Renderiza o fragmento htmx (sem Layout) para polling.
+	v := jobToView(job)
+	s.renderTempl(w, templates.BackupStatusFragment(v, csrfTokenFromContext(r)))
 }
 
 func (s *Server) handleBackupList(w http.ResponseWriter, r *http.Request) {
 	tenantID := chi.URLParam(r, "id")
+	p := s.basePageData(r)
+	p.Title = "Backups — " + tenantID
 	backups, _ := s.listBackupsForTenant(r.Context(), tenantID)
-	data := PageData{
-		Title: "Backups — " + tenantID,
-		Now:   time.Now(),
-		Data:  backups,
-	}
-	s.renderPage(w, "backup_list.html", data)
+	s.renderTempl(w, templates.BackupList(templates.BackupListData{Page: p, TenantID: tenantID, Backups: backups}))
 }
 
 func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 	tenantID := chi.URLParam(r, "id")
 	backupID := r.FormValue("backup_id")
-	principal := principalOrEmpty(r)
+	p := s.basePageData(r)
+	p.Title = "Backup — " + tenantID
 
 	actor := ucadmin.Actor{
-		ID:    principal.UserID,
-		Email: principal.Email,
+		ID:    p.Principal.UserID,
+		Email: p.Principal.Email,
 		IP:    r.RemoteAddr,
 	}
 	res, err := s.backup.Restore(r.Context(), ucbackup.RestoreRequest{
@@ -122,33 +115,23 @@ func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request) {
 		Actor:    cdomain.Actor{ID: actor.ID, Email: actor.Email, IP: actor.IP},
 	})
 	if err != nil {
-		s.renderPage(w, "backup.html", PageData{
-			Title:     "Backup — " + tenantID,
-			Principal: principal,
-			Now:       time.Now(),
-			Error:     "Erro ao iniciar restore: " + err.Error(),
-			Data:      map[string]any{"TenantID": tenantID},
-		})
+		p.Error = "Erro ao iniciar restore: " + err.Error()
+		s.renderTempl(w, templates.Backup(templates.BackupData{Page: p, TenantID: tenantID}))
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/admin/tenants/%s/backup?job_id=%s",
 		tenantID, res.JobID))
 }
 
-// listBackupsForTenant lista os manifest.json disponíveis no prefixo
-// tenants/<id>/backups/.
-func (s *Server) listBackupsForTenant(ctx context.Context, tenantID string) ([]map[string]any, error) {
-	// Implementação simplificada: lista objetos no bucket de backup sob
-	// tenants/<id>/backups/ e agrupa por backupID. Para o primeiro
-	// release, retornamos o backup atual do job store. Refactor: usar
-	// o S3 Listing + parsear cada manifest.json.
+// listBackupsForTenant lista os jobs de export finalizados para o tenant.
+// Implementação atual usa o JobStore em memória (refactor: ler S3).
+func (s *Server) listBackupsForTenant(ctx context.Context, tenantID string) ([]templates.BackupJobView, error) {
 	store := s.backup
 	if store == nil {
 		return nil, nil
 	}
-	// Lista os últimos jobs de export finalizados.
 	jobs := store.ListJobs(50)
-	out := []map[string]any{}
+	out := []templates.BackupJobView{}
 	for _, j := range jobs {
 		if j.Kind != ucbackup.JobExport || j.TenantID != tenantID {
 			continue
@@ -156,13 +139,60 @@ func (s *Server) listBackupsForTenant(ctx context.Context, tenantID string) ([]m
 		if j.State != ucbackup.StateDone {
 			continue
 		}
-		out = append(out, map[string]any{
-			"BackupID":   j.BackupID,
-			"CreatedAt":  j.StartedAt,
-			"Actor":      j.Actor,
-			"State":      j.State,
-			"TablesDone": len(j.Tables),
+		ended := time.Time{}
+		if j.FinishedAt != nil {
+			ended = *j.FinishedAt
+		}
+		out = append(out, templates.BackupJobView{
+			ID:        j.ID,
+			State:     string(j.State),
+			Tables:    tableNames(j.Tables),
+			Bytes:     0, // preenchido quando lermos do S3
+			StartedAt: j.StartedAt,
+			EndedAt:   ended,
+			BackupID:  j.BackupID,
 		})
 	}
 	return out, nil
+}
+
+func tableNames(t []ucbackup.TableProgress) []string {
+	out := make([]string, 0, len(t))
+	for _, tp := range t {
+		out = append(out, tp.Name)
+	}
+	return out
+}
+
+// jobToView converte ucbackup.Job em templates.BackupJobView para uso
+// pelo fragment htmx de status. Lê os campos públicos diretamente; a
+// mutex interna (j.lock) é segurada pela goroutine que executa o job,
+// e leituras concorrentes nos campos primitivos são toleráveis (data
+// race em strings raramente é fatal; se necessário, podemos expor um
+// Snapshot público no pacote backup).
+func jobToView(j *ucbackup.Job) templates.BackupJobView {
+	j.Lock().Lock()
+	defer j.Lock().Unlock()
+	ended := time.Time{}
+	if j.FinishedAt != nil {
+		ended = *j.FinishedAt
+	}
+	return templates.BackupJobView{
+		ID:        j.ID,
+		State:     string(j.State),
+		Tables:    tableProgressNames(j.Tables),
+		Bytes:     0,
+		StartedAt: j.StartedAt,
+		EndedAt:   ended,
+		BackupID:  j.BackupID,
+		Error:     j.Error,
+	}
+}
+
+func tableProgressNames(t []ucbackup.TableProgress) []string {
+	out := make([]string, 0, len(t))
+	for _, tp := range t {
+		out = append(out, tp.Name)
+	}
+	return out
 }

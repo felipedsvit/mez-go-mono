@@ -1,0 +1,87 @@
+package templates
+
+// HealthCheck é um componente verificado pelo health checker.
+type HealthCheck struct {
+	Name    string
+	Status  string
+	Latency string
+	Detail  string
+}
+
+// HealthData é a prop para /admin/services.
+type HealthData struct {
+	Page   PageData
+	Checks []HealthCheck
+}
+
+// Health é o component principal da página /admin/services. Equivalente
+// ao health.html do pai, adaptado ao CSS inline do mono.
+templ Health(d HealthData) {
+	@Layout("Services", d.Page) {
+		<h1>Services &amp; Health</h1>
+		<p class="muted">Status dos serviços ao vivo e alertas ativos.</p>
+		<div class="card-grid">
+			for _, c := range d.Checks {
+				<article class="card health-card">
+					<header>{ c.Name }</header>
+					if c.Status == "ok" {
+						<p class="status-ok">● OK</p>
+					} else {
+						<p class="status-down">● DOWN</p>
+					}
+					if c.Detail != "" {
+						<small>{ c.Detail }</small>
+					}
+				</article>
+			}
+		</div>
+	}
+}
+
+// QRCodeData é a prop para /app/qrcode (htmx refresh).
+type QRCodeData struct {
+	Page     PageData
+	ImagePNG string // data URL ou caminho estático
+	Refresh  string // "5s"
+}
+
+templ QRCode(d QRCodeData) {
+	@Layout("QR Code", d.Page) {
+		<h1>WhatsApp Connection</h1>
+		<p class="muted">Escaneie o QR code abaixo com o WhatsApp do celular.</p>
+		<div class="card text-center"
+		     hx-get="/app/qrcode"
+		     hx-trigger={ "every " + d.Refresh }
+		     hx-swap="outerHTML"
+		     id="qrcode-card">
+			if d.ImagePNG != "" {
+				<img src={ d.ImagePNG } alt="WhatsApp QR Code" width="280" height="280"/>
+			} else {
+				<p><em>QR code não disponível.</em></p>
+				<p><small>Atualiza automaticamente a cada { d.Refresh }.</small></p>
+			}
+		</div>
+	}
+}
+
+// ErrorData é a prop para a página de erro genérica.
+type ErrorData struct {
+	Page       PageData
+	StatusCode int
+	Title      string
+	Message    string
+	Path       string
+}
+
+templ ErrorPage(d ErrorData) {
+	@Layout("Error", d.Page) {
+		<hgroup>
+			<h1>{ d.StatusCode } { d.Title }</h1>
+			<p>{ d.Message }</p>
+		</hgroup>
+		if d.Path != "" {
+			<p><small>Path: <code>{ d.Path }</code></small></p>
+		}
+		<p><a href="/admin">← back to dashboard</a></p>
+	}
+}

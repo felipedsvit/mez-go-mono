@@ -1,66 +1,60 @@
+// Package adminweb — handlers_users.go: handlers /admin/users/*.
 package adminweb
 
 import (
 	"net/http"
-	"time"
 
 	cdomain "github.com/felipedsvit/mez-go-mono/internal/core/admin"
 	ucadmin "github.com/felipedsvit/mez-go-mono/internal/usecase/admin"
+	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/templates"
 )
 
 func (s *Server) handleUsersList(w http.ResponseWriter, r *http.Request) {
-	principal := principalOrEmpty(r)
+	p := s.basePageData(r)
+	p.Title = "Users"
 	users, err := s.users.List(r.Context(), cdomain.UserFilter{})
 	if err != nil {
-		s.renderPage(w, "users.html", PageData{Title: "Users", Error: "Error loading users", Now: time.Now(), Principal: principal})
+		p.Error = "Error loading users"
+		s.renderTempl(w, templates.Users(templates.UsersData{Page: p, Users: nil}))
 		return
 	}
-
-	data := PageData{
-		Title:     "Users",
-		Principal: principal,
-		Data:      users,
-		Now:       time.Now(),
+	rows := make([]templates.UserRow, 0, len(users))
+	for _, u := range users {
+		rows = append(rows, templates.UserRow{
+			ID:     string(u.ID),
+			Email:  u.Email,
+			Name:   u.Name,
+			Status: u.Status,
+		})
 	}
-	s.renderPage(w, "users.html", data)
+	s.renderTempl(w, templates.Users(templates.UsersData{Page: p, Users: rows}))
 }
 
 func (s *Server) handleUserInvite(w http.ResponseWriter, r *http.Request) {
-	principal := principalOrEmpty(r)
+	p := s.basePageData(r)
+	p.Title = "Invite User"
 	roles, _ := s.roles.ListBuiltins(r.Context())
-
-	data := PageData{
-		Title:     "Invite User",
-		Principal: principal,
-		Data:      roles,
-		Now:       time.Now(),
-	}
-	s.renderPage(w, "user_new.html", data)
+	s.renderTempl(w, templates.UserNew(templates.UserNewData{Page: p, Roles: roles}))
 }
 
 func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
-	principal := principalOrEmpty(r)
+	p := s.basePageData(r)
+	p.Title = "Invite User"
 	email := s.formValue(r, "email")
 	name := s.formValue(r, "name")
 	roleID := cdomain.RoleID(s.formValue(r, "role_id"))
 
 	actor := ucadmin.Actor{
-		ID:    principal.UserID,
-		Email: principal.Email,
+		ID:    p.Principal.UserID,
+		Email: p.Principal.Email,
 		IP:    r.RemoteAddr,
 	}
 
 	_, _, err := s.users.Invite(r.Context(), email, name, roleID, actor)
 	if err != nil {
 		roles, _ := s.roles.ListBuiltins(r.Context())
-		data := PageData{
-			Title:     "Invite User",
-			Error:     err.Error(),
-			Principal: principal,
-			Data:      roles,
-			Now:       time.Now(),
-		}
-		s.renderPage(w, "user_new.html", data)
+		p.Error = err.Error()
+		s.renderTempl(w, templates.UserNew(templates.UserNewData{Page: p, Roles: roles}))
 		return
 	}
 
@@ -68,13 +62,13 @@ func (s *Server) handleUserCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUserStatus(w http.ResponseWriter, r *http.Request) {
-	principal := principalOrEmpty(r)
+	p := s.basePageData(r)
 	id := cdomain.AdminUserID(r.PathValue("id"))
 	status := cdomain.UserStatus(r.FormValue("status"))
 
 	actor := ucadmin.Actor{
-		ID:    principal.UserID,
-		Email: principal.Email,
+		ID:    p.Principal.UserID,
+		Email: p.Principal.Email,
 		IP:    r.RemoteAddr,
 	}
 
