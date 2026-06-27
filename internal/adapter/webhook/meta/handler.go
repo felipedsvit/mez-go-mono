@@ -10,6 +10,11 @@
 // Cada app Meta tem seu próprio app secret. O handler recebe o app_id
 // na URL e resolve o secret do banco. Se a credencial não estiver
 // cadastrada, retorna 404.
+//
+// PII safety (issue #136, audit C8): o body nunca é logado; apenas
+// \`body_len\`. Full body é gating atrás de MEZ_DEBUG_WEBHOOK_BODY=true
+// (dev only). Inbound Meta webhooks carregam PII (text.body, contatos,
+// template params) que vazaria em Loki/ELK se logado.
 package meta
 
 import (
@@ -23,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 
 	"github.com/rs/zerolog"
 
@@ -132,10 +138,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse payload canônico.
+	// Parse payload canônico. PII safety: log apenas o tamanho do body
+	// (nunca o conteúdo). Inbound Meta webhooks carregam PII real
+	// (text.body, contatos, template params) — log do body vazaria em
+	// Loki/ELK. Issue #136, audit C8.
 	var payload MetaPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
-		h.log.Warn().Err(err).Bytes("body", body).Msg("meta webhook: invalid json")
+		ev := h.log.Warn().Err(err).Int("body_len", len(body))
+		if os.Getenv("MEZ_DEBUG_WEBHOOK_BODY") == "true" {
+			ev = ev.Bytes("body", body)
+		}
+		ev.Msg("meta webhook: invalid json")
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
