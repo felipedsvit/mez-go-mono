@@ -2,15 +2,12 @@
 //
 // Mascara o OS/browser no payload de conexão (anti-ban E1,
 // mez-go/internal/adapter/provider/whatsmeow/identity.go). Default:
-// Chrome + "Mac OS"; configurável via MEZ_WHATSmeow_IDENTITY.
+// Chrome + "Mac OS"; configurável via MEZ_WHATSMEOW_IDENTITY.
 package whatsmeow
 
 import (
-	"context"
-
 	waCompanionReg "go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/store"
-	waLog "go.mau.fi/whatsmeow/util/log"
 )
 
 // DeviceIdentity emula um navegador comercial no payload de conexão.
@@ -36,7 +33,12 @@ func IdentityFromConfig(kind, osName string) *DeviceIdentity {
 }
 
 // Apply ajusta os metadados globais do store antes do Connect. Idempotente.
-func (d *DeviceIdentity) Apply(logger waLog.Logger) {
+//
+// Gotcha do whatsmeow: store.SetOSInfo e store.DeviceProps são GLOBAIS
+// do pacote. Precisam ser chamados UMA VEZ, antes de qualquer NewClient.
+// Como o mez-go-mono tem 1 client/tenant e NewClient é feito on-demand,
+// o Manager aplica Apply() na inicialização, antes do primeiro GetOrCreate.
+func (d *DeviceIdentity) Apply() {
 	if d == nil {
 		return
 	}
@@ -46,7 +48,4 @@ func (d *DeviceIdentity) Apply(logger waLog.Logger) {
 	}
 	store.SetOSInfo(name, store.GetWAVersion())
 	store.DeviceProps.PlatformType = d.Platform.Enum()
-	if logger != nil {
-		_ = context.Background()
-	}
 }

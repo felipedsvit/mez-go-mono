@@ -78,34 +78,87 @@ func (h *Hasher) Hash(ctx context.Context, plaintext string) (string, error) {
 	return encoded, nil
 }
 
+// encodedParts é o resultado de parseEncoded. Issue #156 (M9 audit,
+// Sprint 0C): Verify precisa dos params ORIGINAIS (m, t, p) do hash
+// para recalcular, não os params do hasher atual. Sem isso, aumentar
+// params no futuro tranca todos os users existentes (forward migration
+// impossível sem password reset week).
+type encodedParts struct {
+	memory      uint32
+	iterations  uint32
+	parallelism uint8
+	salt        []byte
+	hash        []byte
+}
+
 func (h *Hasher) Verify(ctx context.Context, encoded, plaintext string) (bool, error) {
-	salt, hash, err := parseEncoded(encoded)
+	parts, err := parseEncoded(encoded)
 	if err != nil {
 		return false, nil
 	}
 
-	computed := argon2.IDKey([]byte(plaintext), salt, h.params.Iterations, h.params.Memory, h.params.Parallelism, h.params.KeyBytes)
+	// Issue #156 (M9): usa params do hash encoded, não h.params.
+	// CWE-757 (Selection of Less-Secure Algorithm During Negotiation).
+	computed := argon2.IDKey(
+		[]byte(plaintext),
+		parts.salt,
+		parts.iterations,
+		parts.memory,
+		parts.parallelism,
+		uint32(len(parts.hash)),
+	)
 
-	return subtle.ConstantTimeCompare(hash, computed) == 1, nil
+	return subtle.ConstantTimeCompare(parts.hash, computed) == 1, nil
 }
 
-func parseEncoded(encoded string) (salt, hash []byte, err error) {
+func parseEncoded(encoded string) (encodedParts, error) {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 {
-		return nil, nil, fmt.Errorf("invalid format")
+		return encodedParts{}, fmt.Errorf("invalid format")
 	}
 
-	salt, err = base64.RawStdEncoding.DecodeString(parts[4])
+	// Formato: $argon2id$v=19$m=65536,t=3,p=2$<salt>$<hash>
+	// parts[0]="" parts[1]="argon2id" parts[2]="v=19" parts[3]="m=...,t=...,p=..." parts[4]=salt parts[5]=hash
+	if parts[1] != "argon2id" {
+		return encodedParts{}, fmt.Errorf("unsupported variant: %q", parts[1])
+	}
+
+	var p encodedParts
+	var mFlag, tFlag, pFlag bool
+	for _, kv := range strings.Split(parts[3], ",") {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		switch k {
+		case "m":
+			fmt.Sscanf(v, "%d", &p.memory)
+			mFlag = true
+		case "t":
+			fmt.Sscanf(v, "%d", &p.iterations)
+			tFlag = true
+		case "p":
+			fmt.Sscanf(v, "%d", &p.parallelism)
+			pFlag = true
+		}
+	}
+	if !mFlag || !tFlag || !pFlag {
+		return encodedParts{}, fmt.Errorf("missing params: m=%v t=%v p=%v", mFlag, tFlag, pFlag)
+	}
+
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
 	if err != nil {
-		return nil, nil, err
+		return encodedParts{}, fmt.Errorf("decode salt: %w", err)
 	}
+	p.salt = salt
 
-	hash, err = base64.RawStdEncoding.DecodeString(parts[5])
+	hash, err := base64.RawStdEncoding.DecodeString(parts[5])
 	if err != nil {
-		return nil, nil, err
+		return encodedParts{}, fmt.Errorf("decode hash: %w", err)
 	}
+	p.hash = hash
 
-	return salt, hash, nil
+	return p, nil
 }
 
 func generateRandomBytes(n uint32) ([]byte, error) {

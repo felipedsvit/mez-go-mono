@@ -136,6 +136,51 @@ func (e *Envelope) Decrypt(wrappedDEK, ciphertext []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
+// SealSystem cifra plaintext usando a KEK diretamente (sem DEK/tenant).
+// Usado para system_settings (Fase 10): valores cifrados pela master key
+// do platform, lidos apenas por mez_platform/admin.
+//
+// Formato: nonce||ciphertext (mesmo padrão do Envelope.Encrypt).
+// Retorna bytes raw (não base64) — caller pode codificar conforme storage.
+func (e *Envelope) SealSystem(plaintext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(e.kek)
+	if err != nil {
+		return nil, fmt.Errorf("new cipher: %w", err)
+	}
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("new GCM: %w", err)
+	}
+	nonce := make([]byte, aesgcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, fmt.Errorf("nonce: %w", err)
+	}
+	return aesgcm.Seal(nonce, nonce, plaintext, nil), nil
+}
+
+// OpenSystem decifra um valor SealSystem-encrypted. Verifica auth tag
+// do GCM — falha se a KEK estiver errada ou o ciphertext adulterado.
+func (e *Envelope) OpenSystem(ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(e.kek)
+	if err != nil {
+		return nil, fmt.Errorf("new cipher: %w", err)
+	}
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("new GCM: %w", err)
+	}
+	nonceSize := aesgcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+	nonce, encrypted := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := aesgcm.Open(nil, nonce, encrypted, nil)
+	if err != nil {
+		return nil, fmt.Errorf("open system: %w", err)
+	}
+	return plaintext, nil
+}
+
 func zero(b []byte) {
 	for i := range b {
 		b[i] = 0

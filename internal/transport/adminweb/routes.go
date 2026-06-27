@@ -8,6 +8,10 @@
 //   - GET  /admin/tenants/{id}/channels        (5 canais UI)
 //   - GET  /admin/tenants/{id}/qrcode          (whatsmeow PNG, htmx refresh 5s)
 //   - GET  /admin/tenants/{id}/agents          (CRUD agentes)
+//   - GET  /admin/settings                     (system_settings — Fase 10 #177)
+//   - POST /admin/settings                     (criar/atualizar)
+//   - GET  /admin/settings/{key}              (ler uma, JSON)
+//   - POST /admin/settings/{key}/delete        (deletar)
 //
 // CSRF middleware (D16) é wired no wire.go.
 package adminweb
@@ -19,9 +23,10 @@ import (
 
 // Routes agrupa os handlers para registro.
 type Routes struct {
-	App   *AppHandlers
-	Admin *AdminHandlers
-	Log   zerolog.Logger
+	App      *AppHandlers
+	Admin    *AdminHandlers
+	Settings *SettingsHandlers
+	Log      zerolog.Logger
 }
 
 // Register monta as rotas Fase 5 no router chi.
@@ -41,5 +46,12 @@ func (r *Routes) Register(router chi.Router) {
 		router.Get("/admin/tenants/{id}/qrcode", r.App.qrcode)
 		router.Get("/admin/tenants/{id}/agents", r.Admin.agents)
 		router.Post("/admin/tenants/{id}/agents", r.Admin.postAgent)
+	}
+	// /admin/settings/* — Fase 10 (#177): system-level config.
+	if r.Settings != nil {
+		router.Get("/admin/settings", r.Settings.listSettings)
+		router.Post("/admin/settings", r.Settings.postSetting)
+		router.Get("/admin/settings/{key}", r.Settings.jsonValue)
+		router.Post("/admin/settings/{key}/delete", r.Settings.deleteSetting)
 	}
 }

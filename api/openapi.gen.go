@@ -4,11 +4,13 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
-	"github.com/labstack/echo/v4"
+	"github.com/go-chi/chi/v5"
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
@@ -412,337 +414,697 @@ type ReceiveTelegramWebhookJSONRequestBody = TelegramUpdate
 type ServerInterface interface {
 	// Get the current WhatsMeow QR code for pairing (Fase 4)
 	// (GET /api/channels/whatsmeow/qrcode)
-	WhatsmeowQRCode(ctx echo.Context) error
+	WhatsmeowQRCode(w http.ResponseWriter, r *http.Request)
 	// Health of a channel (Fase 4: whatsmeow é real, não stub)
 	// (GET /api/channels/{channel}/health)
-	ChannelHealth(ctx echo.Context, channel ChannelHealthParamsChannel) error
+	ChannelHealth(w http.ResponseWriter, r *http.Request, channel ChannelHealthParamsChannel)
 	// List conversations of the current tenant
 	// (GET /api/conversations)
-	ListConversations(ctx echo.Context) error
+	ListConversations(w http.ResponseWriter, r *http.Request)
 	// Assign a conversation to an agent (Fase 2: just sets the field)
 	// (POST /api/conversations/{id}/assign)
-	AssignConversation(ctx echo.Context, id openapi_types.UUID) error
+	AssignConversation(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
 	// Mark a conversation as resolved
 	// (POST /api/conversations/{id}/resolve)
-	ResolveConversation(ctx echo.Context, id openapi_types.UUID) error
+	ResolveConversation(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
 	// List messages of a conversation
 	// (GET /api/messages)
-	ListMessages(ctx echo.Context, params ListMessagesParams) error
+	ListMessages(w http.ResponseWriter, r *http.Request, params ListMessagesParams)
 	// Send a message (Fase 3 — real, queues to outbox)
 	// (POST /api/messages)
-	PostMessage(ctx echo.Context) error
+	PostMessage(w http.ResponseWriter, r *http.Request)
 	// Revoke a sent message (D6: ActionRevoke)
 	// (DELETE /api/messages/{id})
-	RevokeMessage(ctx echo.Context, id openapi_types.UUID) error
+	RevokeMessage(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
 	// Edit a sent message (D6: ActionEdit)
 	// (PATCH /api/messages/{id})
-	EditMessage(ctx echo.Context, id openapi_types.UUID) error
+	EditMessage(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
 	// Add a reaction to a message (D6)
 	// (POST /api/messages/{id}/reactions)
-	PostReaction(ctx echo.Context, id openapi_types.UUID) error
+	PostReaction(w http.ResponseWriter, r *http.Request, id openapi_types.UUID)
 	// Health check
 	// (GET /health)
-	Health(ctx echo.Context) error
+	Health(w http.ResponseWriter, r *http.Request)
 	// Prometheus metrics
 	// (GET /metrics)
-	Metrics(ctx echo.Context) error
+	Metrics(w http.ResponseWriter, r *http.Request)
 	// Readiness check
 	// (GET /readyz)
-	Readiness(ctx echo.Context) error
+	Readiness(w http.ResponseWriter, r *http.Request)
 	// Receive a Meta webhook (WABA / Instagram / Messenger)
 	// (POST /webhooks/meta/{app_id})
-	ReceiveMetaWebhook(ctx echo.Context, appId string) error
+	ReceiveMetaWebhook(w http.ResponseWriter, r *http.Request, appId string)
 	// Receive a Telegram Bot webhook
 	// (POST /webhooks/telegram/{tenant_id})
-	ReceiveTelegramWebhook(ctx echo.Context, tenantId openapi_types.UUID) error
+	ReceiveTelegramWebhook(w http.ResponseWriter, r *http.Request, tenantId openapi_types.UUID)
 }
 
-// ServerInterfaceWrapper converts echo contexts to parameters.
+// Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
+
+type Unimplemented struct{}
+
+// Get the current WhatsMeow QR code for pairing (Fase 4)
+// (GET /api/channels/whatsmeow/qrcode)
+func (_ Unimplemented) WhatsmeowQRCode(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Health of a channel (Fase 4: whatsmeow é real, não stub)
+// (GET /api/channels/{channel}/health)
+func (_ Unimplemented) ChannelHealth(w http.ResponseWriter, r *http.Request, channel ChannelHealthParamsChannel) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List conversations of the current tenant
+// (GET /api/conversations)
+func (_ Unimplemented) ListConversations(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Assign a conversation to an agent (Fase 2: just sets the field)
+// (POST /api/conversations/{id}/assign)
+func (_ Unimplemented) AssignConversation(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Mark a conversation as resolved
+// (POST /api/conversations/{id}/resolve)
+func (_ Unimplemented) ResolveConversation(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// List messages of a conversation
+// (GET /api/messages)
+func (_ Unimplemented) ListMessages(w http.ResponseWriter, r *http.Request, params ListMessagesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Send a message (Fase 3 — real, queues to outbox)
+// (POST /api/messages)
+func (_ Unimplemented) PostMessage(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Revoke a sent message (D6: ActionRevoke)
+// (DELETE /api/messages/{id})
+func (_ Unimplemented) RevokeMessage(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Edit a sent message (D6: ActionEdit)
+// (PATCH /api/messages/{id})
+func (_ Unimplemented) EditMessage(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Add a reaction to a message (D6)
+// (POST /api/messages/{id}/reactions)
+func (_ Unimplemented) PostReaction(w http.ResponseWriter, r *http.Request, id openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Health check
+// (GET /health)
+func (_ Unimplemented) Health(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Prometheus metrics
+// (GET /metrics)
+func (_ Unimplemented) Metrics(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Readiness check
+// (GET /readyz)
+func (_ Unimplemented) Readiness(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Receive a Meta webhook (WABA / Instagram / Messenger)
+// (POST /webhooks/meta/{app_id})
+func (_ Unimplemented) ReceiveMetaWebhook(w http.ResponseWriter, r *http.Request, appId string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Receive a Telegram Bot webhook
+// (POST /webhooks/telegram/{tenant_id})
+func (_ Unimplemented) ReceiveTelegramWebhook(w http.ResponseWriter, r *http.Request, tenantId openapi_types.UUID) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// ServerInterfaceWrapper converts contexts to parameters.
 type ServerInterfaceWrapper struct {
-	Handler ServerInterface
+	Handler            ServerInterface
+	HandlerMiddlewares []MiddlewareFunc
+	ErrorHandlerFunc   func(w http.ResponseWriter, r *http.Request, err error)
 }
 
-// WhatsmeowQRCode converts echo context to params.
-func (w *ServerInterfaceWrapper) WhatsmeowQRCode(ctx echo.Context) error {
-	var err error
+type MiddlewareFunc func(http.Handler) http.Handler
 
-	ctx.Set(string(BearerAuthScopes), []string{})
+// WhatsmeowQRCode operation middleware
+func (siw *ServerInterfaceWrapper) WhatsmeowQRCode(w http.ResponseWriter, r *http.Request) {
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.WhatsmeowQRCode(ctx)
-	return err
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WhatsmeowQRCode(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// ChannelHealth converts echo context to params.
-func (w *ServerInterfaceWrapper) ChannelHealth(ctx echo.Context) error {
+// ChannelHealth operation middleware
+func (siw *ServerInterfaceWrapper) ChannelHealth(w http.ResponseWriter, r *http.Request) {
+
 	var err error
+	_ = err
+
 	// ------------- Path parameter "channel" -------------
 	var channel ChannelHealthParamsChannel
 
-	err = runtime.BindStyledParameterWithOptions("simple", "channel", ctx.Param("channel"), &channel, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "channel", chi.URLParam(r, "channel"), &channel, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter channel: %s", err))
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "channel", Err: err})
+		return
 	}
 
-	ctx.Set(string(BearerAuthScopes), []string{})
+	ctx := r.Context()
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.ChannelHealth(ctx, channel)
-	return err
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ChannelHealth(w, r, channel)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// ListConversations converts echo context to params.
-func (w *ServerInterfaceWrapper) ListConversations(ctx echo.Context) error {
-	var err error
+// ListConversations operation middleware
+func (siw *ServerInterfaceWrapper) ListConversations(w http.ResponseWriter, r *http.Request) {
 
-	ctx.Set(string(BearerAuthScopes), []string{})
+	ctx := r.Context()
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.ListConversations(ctx)
-	return err
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListConversations(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// AssignConversation converts echo context to params.
-func (w *ServerInterfaceWrapper) AssignConversation(ctx echo.Context) error {
+// AssignConversation operation middleware
+func (siw *ServerInterfaceWrapper) AssignConversation(w http.ResponseWriter, r *http.Request) {
+
 	var err error
+	_ = err
+
 	// ------------- Path parameter "id" -------------
 	var id openapi_types.UUID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
 	}
 
-	ctx.Set(string(BearerAuthScopes), []string{})
+	ctx := r.Context()
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.AssignConversation(ctx, id)
-	return err
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AssignConversation(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// ResolveConversation converts echo context to params.
-func (w *ServerInterfaceWrapper) ResolveConversation(ctx echo.Context) error {
+// ResolveConversation operation middleware
+func (siw *ServerInterfaceWrapper) ResolveConversation(w http.ResponseWriter, r *http.Request) {
+
 	var err error
+	_ = err
+
 	// ------------- Path parameter "id" -------------
 	var id openapi_types.UUID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
 	}
 
-	ctx.Set(string(BearerAuthScopes), []string{})
+	ctx := r.Context()
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.ResolveConversation(ctx, id)
-	return err
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ResolveConversation(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// ListMessages converts echo context to params.
-func (w *ServerInterfaceWrapper) ListMessages(ctx echo.Context) error {
-	var err error
+// ListMessages operation middleware
+func (siw *ServerInterfaceWrapper) ListMessages(w http.ResponseWriter, r *http.Request) {
 
-	ctx.Set(string(BearerAuthScopes), []string{})
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
 
 	// Parameter object where we will unmarshal all parameters from the context
 	var params ListMessagesParams
+
 	// ------------- Required query parameter "conversation_id" -------------
 
-	err = runtime.BindQueryParameterWithOptions("form", true, true, "conversation_id", ctx.QueryParams(), &params.ConversationId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "conversation_id", r.URL.Query(), &params.ConversationId, runtime.BindQueryParameterOptions{Type: "string", Format: "uuid"})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter conversation_id: %s", err))
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "conversation_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "conversation_id", Err: err})
+		}
+		return
 	}
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.ListMessages(ctx, params)
-	return err
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMessages(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// PostMessage converts echo context to params.
-func (w *ServerInterfaceWrapper) PostMessage(ctx echo.Context) error {
-	var err error
+// PostMessage operation middleware
+func (siw *ServerInterfaceWrapper) PostMessage(w http.ResponseWriter, r *http.Request) {
 
-	ctx.Set(string(BearerAuthScopes), []string{})
+	ctx := r.Context()
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.PostMessage(ctx)
-	return err
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostMessage(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// RevokeMessage converts echo context to params.
-func (w *ServerInterfaceWrapper) RevokeMessage(ctx echo.Context) error {
+// RevokeMessage operation middleware
+func (siw *ServerInterfaceWrapper) RevokeMessage(w http.ResponseWriter, r *http.Request) {
+
 	var err error
+	_ = err
+
 	// ------------- Path parameter "id" -------------
 	var id openapi_types.UUID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
 	}
 
-	ctx.Set(string(BearerAuthScopes), []string{})
+	ctx := r.Context()
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.RevokeMessage(ctx, id)
-	return err
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RevokeMessage(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// EditMessage converts echo context to params.
-func (w *ServerInterfaceWrapper) EditMessage(ctx echo.Context) error {
+// EditMessage operation middleware
+func (siw *ServerInterfaceWrapper) EditMessage(w http.ResponseWriter, r *http.Request) {
+
 	var err error
+	_ = err
+
 	// ------------- Path parameter "id" -------------
 	var id openapi_types.UUID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
 	}
 
-	ctx.Set(string(BearerAuthScopes), []string{})
+	ctx := r.Context()
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.EditMessage(ctx, id)
-	return err
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EditMessage(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// PostReaction converts echo context to params.
-func (w *ServerInterfaceWrapper) PostReaction(ctx echo.Context) error {
+// PostReaction operation middleware
+func (siw *ServerInterfaceWrapper) PostReaction(w http.ResponseWriter, r *http.Request) {
+
 	var err error
+	_ = err
+
 	// ------------- Path parameter "id" -------------
 	var id openapi_types.UUID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "id", ctx.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter id: %s", err))
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
 	}
 
-	ctx.Set(string(BearerAuthScopes), []string{})
+	ctx := r.Context()
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.PostReaction(ctx, id)
-	return err
+	ctx = context.WithValue(ctx, BearerAuthScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostReaction(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// Health converts echo context to params.
-func (w *ServerInterfaceWrapper) Health(ctx echo.Context) error {
-	var err error
+// Health operation middleware
+func (siw *ServerInterfaceWrapper) Health(w http.ResponseWriter, r *http.Request) {
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.Health(ctx)
-	return err
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Health(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// Metrics converts echo context to params.
-func (w *ServerInterfaceWrapper) Metrics(ctx echo.Context) error {
-	var err error
+// Metrics operation middleware
+func (siw *ServerInterfaceWrapper) Metrics(w http.ResponseWriter, r *http.Request) {
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.Metrics(ctx)
-	return err
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Metrics(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// Readiness converts echo context to params.
-func (w *ServerInterfaceWrapper) Readiness(ctx echo.Context) error {
-	var err error
+// Readiness operation middleware
+func (siw *ServerInterfaceWrapper) Readiness(w http.ResponseWriter, r *http.Request) {
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.Readiness(ctx)
-	return err
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Readiness(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// ReceiveMetaWebhook converts echo context to params.
-func (w *ServerInterfaceWrapper) ReceiveMetaWebhook(ctx echo.Context) error {
+// ReceiveMetaWebhook operation middleware
+func (siw *ServerInterfaceWrapper) ReceiveMetaWebhook(w http.ResponseWriter, r *http.Request) {
+
 	var err error
+	_ = err
+
 	// ------------- Path parameter "app_id" -------------
 	var appId string
 
-	err = runtime.BindStyledParameterWithOptions("simple", "app_id", ctx.Param("app_id"), &appId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "app_id", chi.URLParam(r, "app_id"), &appId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter app_id: %s", err))
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "app_id", Err: err})
+		return
 	}
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.ReceiveMetaWebhook(ctx, appId)
-	return err
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReceiveMetaWebhook(w, r, appId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// ReceiveTelegramWebhook converts echo context to params.
-func (w *ServerInterfaceWrapper) ReceiveTelegramWebhook(ctx echo.Context) error {
+// ReceiveTelegramWebhook operation middleware
+func (siw *ServerInterfaceWrapper) ReceiveTelegramWebhook(w http.ResponseWriter, r *http.Request) {
+
 	var err error
+	_ = err
+
 	// ------------- Path parameter "tenant_id" -------------
 	var tenantId openapi_types.UUID
 
-	err = runtime.BindStyledParameterWithOptions("simple", "tenant_id", ctx.Param("tenant_id"), &tenantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
+	err = runtime.BindStyledParameterWithOptions("simple", "tenant_id", chi.URLParam(r, "tenant_id"), &tenantId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "uuid"})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter tenant_id: %s", err))
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "tenant_id", Err: err})
+		return
 	}
 
-	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.ReceiveTelegramWebhook(ctx, tenantId)
-	return err
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReceiveTelegramWebhook(w, r, tenantId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
 }
 
-// This is a simple interface which specifies echo.Route addition functions which
-// are present on both echo.Echo and echo.Group, since we want to allow using
-// either of them for path registration
-type EchoRouter interface {
-	CONNECT(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
-	DELETE(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
-	GET(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
-	HEAD(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
-	OPTIONS(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
-	PATCH(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
-	POST(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
-	PUT(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
-	TRACE(path string, h echo.HandlerFunc, m ...echo.MiddlewareFunc) *echo.Route
+type UnescapedCookieParamError struct {
+	ParamName string
+	Err       error
 }
 
-// RegisterHandlersOptions configures RegisterHandlersWithOptions.
-type RegisterHandlersOptions struct {
-	// BaseURL is prepended to every registered path so the API can be served
-	// under a prefix.
-	BaseURL string
-	// OperationMiddlewares lets the caller attach per-operation middleware at
-	// registration time. The map key is the OpenAPI `operationId` value as it
-	// appears in the spec (the raw, un-normalized form). Operations that have
-	// no entry are registered with no extra middleware. A nil map disables
-	// per-operation middleware entirely.
-	OperationMiddlewares map[string][]echo.MiddlewareFunc
+func (e *UnescapedCookieParamError) Error() string {
+	return fmt.Sprintf("error unescaping cookie parameter '%s'", e.ParamName)
 }
 
-// RegisterHandlers adds each server route to the EchoRouter.
-func RegisterHandlers(router EchoRouter, si ServerInterface) {
-	RegisterHandlersWithOptions(router, si, RegisterHandlersOptions{})
+func (e *UnescapedCookieParamError) Unwrap() error {
+	return e.Err
 }
 
-// RegisterHandlersWithBaseURL registers handlers and prepends BaseURL to the
-// paths so the API can be served under a prefix.
-func RegisterHandlersWithBaseURL(router EchoRouter, si ServerInterface, baseURL string) {
-	RegisterHandlersWithOptions(router, si, RegisterHandlersOptions{BaseURL: baseURL})
+type UnmarshalingParamError struct {
+	ParamName string
+	Err       error
 }
 
-// RegisterHandlersWithOptions registers handlers using the supplied options,
-// including any per-operation middleware.
-func RegisterHandlersWithOptions(router EchoRouter, si ServerInterface, options RegisterHandlersOptions) {
+func (e *UnmarshalingParamError) Error() string {
+	return fmt.Sprintf("Error unmarshaling parameter %s as JSON: %s", e.ParamName, e.Err.Error())
+}
 
+func (e *UnmarshalingParamError) Unwrap() error {
+	return e.Err
+}
+
+type RequiredParamError struct {
+	ParamName string
+}
+
+func (e *RequiredParamError) Error() string {
+	return fmt.Sprintf("Query argument %s is required, but not found", e.ParamName)
+}
+
+type RequiredHeaderError struct {
+	ParamName string
+	Err       error
+}
+
+func (e *RequiredHeaderError) Error() string {
+	return fmt.Sprintf("Header parameter %s is required, but not found", e.ParamName)
+}
+
+func (e *RequiredHeaderError) Unwrap() error {
+	return e.Err
+}
+
+type InvalidParamFormatError struct {
+	ParamName string
+	Err       error
+}
+
+func (e *InvalidParamFormatError) Error() string {
+	return fmt.Sprintf("Invalid format for parameter %s: %s", e.ParamName, e.Err.Error())
+}
+
+func (e *InvalidParamFormatError) Unwrap() error {
+	return e.Err
+}
+
+type TooManyValuesForParamError struct {
+	ParamName string
+	Count     int
+}
+
+func (e *TooManyValuesForParamError) Error() string {
+	return fmt.Sprintf("Expected one value for %s, got %d", e.ParamName, e.Count)
+}
+
+// Handler creates http.Handler with routing matching OpenAPI spec.
+func Handler(si ServerInterface) http.Handler {
+	return HandlerWithOptions(si, ChiServerOptions{})
+}
+
+type ChiServerOptions struct {
+	BaseURL          string
+	BaseRouter       chi.Router
+	Middlewares      []MiddlewareFunc
+	ErrorHandlerFunc func(w http.ResponseWriter, r *http.Request, err error)
+}
+
+// HandlerFromMux creates http.Handler with routing matching OpenAPI spec based on the provided mux.
+func HandlerFromMux(si ServerInterface, r chi.Router) http.Handler {
+	return HandlerWithOptions(si, ChiServerOptions{
+		BaseRouter: r,
+	})
+}
+
+func HandlerFromMuxWithBaseURL(si ServerInterface, r chi.Router, baseURL string) http.Handler {
+	return HandlerWithOptions(si, ChiServerOptions{
+		BaseURL:    baseURL,
+		BaseRouter: r,
+	})
+}
+
+// HandlerWithOptions creates http.Handler with additional options
+func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handler {
+	r := options.BaseRouter
+
+	if r == nil {
+		r = chi.NewRouter()
+	}
+	if options.ErrorHandlerFunc == nil {
+		options.ErrorHandlerFunc = func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+	}
 	wrapper := ServerInterfaceWrapper{
-		Handler: si,
+		Handler:            si,
+		HandlerMiddlewares: options.Middlewares,
+		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
-	router.GET(options.BaseURL+"/api/channels/whatsmeow/qrcode", wrapper.WhatsmeowQRCode, options.OperationMiddlewares["whatsmeowQRCode"]...)
-	router.GET(options.BaseURL+"/api/channels/:channel/health", wrapper.ChannelHealth, options.OperationMiddlewares["channelHealth"]...)
-	router.GET(options.BaseURL+"/api/conversations", wrapper.ListConversations, options.OperationMiddlewares["listConversations"]...)
-	router.POST(options.BaseURL+"/api/conversations/:id/assign", wrapper.AssignConversation, options.OperationMiddlewares["assignConversation"]...)
-	router.POST(options.BaseURL+"/api/conversations/:id/resolve", wrapper.ResolveConversation, options.OperationMiddlewares["resolveConversation"]...)
-	router.GET(options.BaseURL+"/api/messages", wrapper.ListMessages, options.OperationMiddlewares["listMessages"]...)
-	router.POST(options.BaseURL+"/api/messages", wrapper.PostMessage, options.OperationMiddlewares["postMessage"]...)
-	router.DELETE(options.BaseURL+"/api/messages/:id", wrapper.RevokeMessage, options.OperationMiddlewares["revokeMessage"]...)
-	router.PATCH(options.BaseURL+"/api/messages/:id", wrapper.EditMessage, options.OperationMiddlewares["editMessage"]...)
-	router.POST(options.BaseURL+"/api/messages/:id/reactions", wrapper.PostReaction, options.OperationMiddlewares["postReaction"]...)
-	router.GET(options.BaseURL+"/health", wrapper.Health, options.OperationMiddlewares["health"]...)
-	router.GET(options.BaseURL+"/metrics", wrapper.Metrics, options.OperationMiddlewares["metrics"]...)
-	router.GET(options.BaseURL+"/readyz", wrapper.Readiness, options.OperationMiddlewares["readiness"]...)
-	router.POST(options.BaseURL+"/webhooks/meta/:app_id", wrapper.ReceiveMetaWebhook, options.OperationMiddlewares["receiveMetaWebhook"]...)
-	router.POST(options.BaseURL+"/webhooks/telegram/:tenant_id", wrapper.ReceiveTelegramWebhook, options.OperationMiddlewares["receiveTelegramWebhook"]...)
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/channels/whatsmeow/qrcode", wrapper.WhatsmeowQRCode)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/channels/{channel}/health", wrapper.ChannelHealth)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/conversations", wrapper.ListConversations)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/conversations/{id}/assign", wrapper.AssignConversation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/conversations/{id}/resolve", wrapper.ResolveConversation)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/messages", wrapper.ListMessages)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/messages", wrapper.PostMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/messages/{id}", wrapper.RevokeMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/messages/{id}", wrapper.EditMessage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/messages/{id}/reactions", wrapper.PostReaction)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/health", wrapper.Health)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/metrics", wrapper.Metrics)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/readyz", wrapper.Readiness)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/webhooks/meta/{app_id}", wrapper.ReceiveMetaWebhook)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/webhooks/telegram/{tenant_id}", wrapper.ReceiveTelegramWebhook)
+	})
 
+	return r
 }

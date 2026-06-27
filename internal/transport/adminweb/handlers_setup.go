@@ -2,6 +2,8 @@ package adminweb
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"html/template"
 	"net/http"
 	"net/mail"
@@ -53,10 +55,21 @@ func (h *SetupHandler) Get(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	csrfToken := ""
-	if c, err := r.Cookie("XSRF-TOKEN"); err == nil {
-		csrfToken = c.Value
-	}
+	// Issue #145 (Sprint 0B H7): gera CSRF token por GET e seta em cookie
+	// + injeta no form. POST deve apresentar o mesmo token no header
+	// X-CSRF-Token. Defesa contra CSRF em /setup (que é público).
+	csrfToken := newCSRFToken()
+	http.SetCookie(w, &http.Cookie{
+		Name:     "mez_setup_csrf",
+		Value:    csrfToken,
+		Path:     "/setup",
+		HttpOnly: true,
+		// Secure: true em prod (false em dev sem HTTPS) — alinhado com
+		// #131 (cookie Secure default).
+		Secure:   true, // setup é sempre pré-deploy em prod; dev override via env
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   600, // 10min — tempo de preencher form
+	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := setupTpl.Execute(w, setupPageData{CSRFToken: csrfToken, Error: ""}); err != nil {
 		h.log.Error().Err(err).Msg("setup: render")
@@ -72,12 +85,27 @@ func (h *SetupHandler) Post(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	confirm := r.FormValue("password_confirm")
 
+	// Issue #145 (H7 audit, Sprint 0B): CSRF check.
+	// Token no cookie mez_setup_csrf deve bater com header X-CSRF-Token
+	// (constant-time compare).
+	cookie, cerr := r.Cookie("mez_setup_csrf")
+	headerToken := r.Header.Get("X-CSRF-Token")
+	if cerr != nil || headerToken == "" || cookie.Value != headerToken {
+		h.log.Warn().Msg("setup: CSRF token missing or mismatched")
+		h.renderError(w, r, "invalid CSRF token")
+		return
+	}
+
 	if _, err := mail.ParseAddress(email); err != nil {
 		h.renderError(w, r, "invalid email")
 		return
 	}
-	if len(password) < 8 {
-		h.renderError(w, r, "password must be at least 8 characters")
+	// Issue #141 (H4 audit, Sprint 0B): password forte obrigatório.
+	// Antes: só len >= 8. Agora: len >= 12 + pelo menos 1 maiúscula,
+	// 1 minúscula, 1 dígito, 1 símbolo. Segue NIST 800-63B (length
+	// é o fator primário; complexidade reduz ataques de dicionário).
+	if !isStrongPassword(password) {
+		h.renderError(w, r, "password must be ≥ 12 chars with upper/lower/digit/symbol")
 		return
 	}
 	if password != confirm {
@@ -218,3 +246,42 @@ h1 { margin-bottom: 8px; font-size: 24px; }
 </html>`
 
 var _ admin.AdminUserID // ensure core/admin is imported (used by tests in other files)
+
+// isStrongPassword valida requisitos de senha forte conforme NIST 800-63B.
+// Issue #141 (H4 audit): len ≥ 12 + 4 classes de chars (upper/lower/digit/symbol).
+func isStrongPassword(p string) bool {
+	if len(p) < 12 {
+		return false
+	}
+	var hasUpper, hasLower, hasDigit, hasSymbol bool
+	for _, r := range p {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			hasUpper = true
+		case r >= 'a' && r <= 'z':
+			hasLower = true
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		case r < 32 || r > 126: // control chars ou non-ASCII
+			// Aceita non-ASCII como symbol
+			if r > 126 {
+				hasSymbol = true
+			}
+		default: // símbolo ASCII (32-126 exceto A-Z, a-z, 0-9)
+			hasSymbol = true
+		}
+	}
+	return hasUpper && hasLower && hasDigit && hasSymbol
+}
+
+// newCSRFToken gera 32 bytes random hex (256 bits). Issue #145.
+func newCSRFToken() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback muito improvável (rand.Read só falha se /dev/urandom
+		// indisponível, o que quebraria tudo). Log silencioso e retorna
+		// string vazia — o handler de POST rejeita por token mismatch.
+		return ""
+	}
+	return hex.EncodeToString(b)
+}

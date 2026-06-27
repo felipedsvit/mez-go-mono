@@ -70,7 +70,7 @@ func wabaFactory(resolver port.CredentialsResolver, log zerolog.Logger) port.Sen
 		if err := json.Unmarshal(raw, &c); err != nil {
 			return nil, fmt.Errorf("waba credentials parse: %w", err)
 		}
-		client := waba.NewClient("", "", c.PhoneNumberID, c.AccessToken)
+		client := waba.NewClient(waba.ClientConfig{PhoneNumberID: c.PhoneNumberID, Token: c.AccessToken})
 		return waba.New(tenantID, client, log), nil
 	}
 }
@@ -91,7 +91,7 @@ func instagramFactory(resolver port.CredentialsResolver, log zerolog.Logger) por
 		if err := json.Unmarshal(raw, &c); err != nil {
 			return nil, fmt.Errorf("instagram credentials parse: %w", err)
 		}
-		client := instagram.NewClient("", "", c.PageID, c.AccessToken)
+		client := instagram.NewClient(instagram.ClientConfig{PageID: c.PageID, Token: c.AccessToken})
 		return instagram.New(tenantID, client, log), nil
 	}
 }
@@ -106,7 +106,7 @@ func messengerFactory(resolver port.CredentialsResolver, log zerolog.Logger) por
 		if err := json.Unmarshal(raw, &c); err != nil {
 			return nil, fmt.Errorf("messenger credentials parse: %w", err)
 		}
-		client := messenger.NewClient("", "", c.AccessToken)
+		client := messenger.NewClient(messenger.ClientConfig{PageID: c.PageID, Token: c.AccessToken})
 		return messenger.New(tenantID, client, log), nil
 	}
 }
@@ -149,8 +149,40 @@ type stubBotClient struct {
 	token string
 }
 
-func (s *stubBotClient) SendMessage(_ context.Context, chatID int64, _ string) (string, error) {
-	return fmt.Sprintf("tg-stub-%d", chatID), nil
+func (s *stubBotClient) SendMessage(_ context.Context, chatID int64, text string, _ telegram_bot.ReplyMarkup) (string, error) {
+	return fmt.Sprintf("tg-stub-%d-%s", chatID, text), nil
+}
+
+func (s *stubBotClient) SendPhoto(_ context.Context, chatID int64, url, caption string, _ telegram_bot.ReplyMarkup) (string, error) {
+	return fmt.Sprintf("tg-stub-photo-%d-%s", chatID, url), nil
+}
+func (s *stubBotClient) SendVideo(_ context.Context, chatID int64, url, caption string, _ telegram_bot.ReplyMarkup) (string, error) {
+	return fmt.Sprintf("tg-stub-video-%d-%s", chatID, url), nil
+}
+func (s *stubBotClient) SendVoice(_ context.Context, chatID int64, url, caption string, _ telegram_bot.ReplyMarkup) (string, error) {
+	return fmt.Sprintf("tg-stub-voice-%d-%s", chatID, url), nil
+}
+func (s *stubBotClient) SendAudio(_ context.Context, chatID int64, url, caption string, _ telegram_bot.ReplyMarkup) (string, error) {
+	return fmt.Sprintf("tg-stub-audio-%d-%s", chatID, url), nil
+}
+func (s *stubBotClient) SendDocument(_ context.Context, chatID int64, url, caption, filename string, _ telegram_bot.ReplyMarkup) (string, error) {
+	return fmt.Sprintf("tg-stub-doc-%d-%s", chatID, url), nil
+}
+func (s *stubBotClient) SendSticker(_ context.Context, chatID int64, fileID string) (string, error) {
+	return fmt.Sprintf("tg-stub-sticker-%d-%s", chatID, fileID), nil
+}
+func (s *stubBotClient) SendLocation(_ context.Context, chatID int64, _, _ float64) (string, error) {
+	return fmt.Sprintf("tg-stub-loc-%d", chatID), nil
+}
+func (s *stubBotClient) SendInvoice(_ context.Context, chatID int64, _ telegram_bot.Invoice) (string, error) {
+	return fmt.Sprintf("tg-stub-invoice-%d", chatID), nil
+}
+func (s *stubBotClient) EditMessageText(_ context.Context, _ int64, _ string, _ string, _ telegram_bot.ReplyMarkup) error {
+	return nil
+}
+func (s *stubBotClient) DeleteMessage(_ context.Context, _ int64, _ string) error { return nil }
+func (s *stubBotClient) SetMessageReaction(_ context.Context, _ int64, _ string, _ string) error {
+	return nil
 }
 
 func (s *stubBotClient) SendChatAction(_ context.Context, _ int64, _ string) error {

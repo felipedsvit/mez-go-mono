@@ -53,6 +53,13 @@ type Manager struct {
 	mu      sync.Mutex
 	clients map[domain.TenantID]*clientEntry
 	order   []domain.TenantID // LRU: front=most-recent
+
+	// defaultFactory é chamada no GetOrCreate quando nenhuma factory
+	// é passada pelo caller. Default = nil = usa stub.
+	// Configurável via SetClientFactory (Fase 9, sub-issue F).
+	defaultFactory ClientFactory
+	// identityOnce garante que DeviceIdentity.Apply() roda 1 vez.
+	identityOnce sync.Once
 }
 
 // clientEntry é o estado interno por tenant.
@@ -76,8 +83,33 @@ func NewManager(cfg Config, stateR *postgres.WhatsAppStateRepo, log zerolog.Logg
 	}
 }
 
+// SetClientFactory injeta a factory default usada em GetOrCreate quando
+// nenhuma é fornecida (ex.: factory real com sqlstore). Sem factory
+// configurada, o Manager usa o stub — comportamento Fase 4.
+//
+// A factory é chamada uma vez por tenant no primeiro GetOrCreate.
+// Aplica Identity.Apply() antes de criar o client (gotcha do whatsmeow:
+// store.SetOSInfo e DeviceProps.PlatformType são GLOBAIS, devem ser
+// setados antes de qualquer NewClient).
+func (m *Manager) SetClientFactory(identity *DeviceIdentity, factory ClientFactory) {
+	m.identityOnce.Do(func() {
+		if identity != nil {
+			identity.Apply()
+			m.log.Info().
+				Str("os", identity.OSName).
+				Int32("platform", int32(identity.Platform)).
+				Msg("whatsmeow: device identity applied (anti-ban E1)")
+		}
+	})
+	m.defaultFactory = factory
+}
+
 // GetOrCreate retorna o *Adapter para um tenant, criando on-demand.
 // Aplica LRU eviction se MaxActiveTenants for atingido.
+//
+// Se factory for nil, usa m.defaultFactory (configurável via
+// SetClientFactory). Se defaultFactory também for nil, usa NewStubClient
+// (fallback Fase 4).
 func (m *Manager) GetOrCreate(ctx context.Context, tenantID domain.TenantID, factory ClientFactory) (*Adapter, error) {
 	m.mu.Lock()
 	if e, ok := m.clients[tenantID]; ok {
@@ -87,6 +119,20 @@ func (m *Manager) GetOrCreate(ctx context.Context, tenantID domain.TenantID, fac
 		return e.adapter, nil
 	}
 	m.mu.Unlock()
+
+	// Resolve factory: parâmetro > default > stub.
+	if factory == nil {
+		if m.defaultFactory != nil {
+			factory = m.defaultFactory
+		} else {
+			m.mu.Lock()
+			tenantID2 := tenantID
+			factory = func(_ context.Context, _ domain.TenantID) (Client, error) {
+				return NewStubClient(string(tenantID2), m.log), nil
+			}
+			m.mu.Unlock()
+		}
+	}
 
 	// Cria fora do lock para não segurar durante I/O.
 	client, err := factory(ctx, tenantID)

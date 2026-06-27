@@ -54,6 +54,10 @@ type Handlers struct {
 	listSvc    *ucmessaging.ListService
 	senderReg  port.SenderRegistry
 	qrProvider QRCodeProvider
+	// txRunner (issue #133 Sprint 0A C5 audit) é injetado no Register
+	// e embrulha cada request em RunInTenantTx. Pode ser nil em testes
+	// unitários onde os handlers são chamados diretamente sem RLS.
+	txRunner port.TxRunner
 }
 
 // QRCodeProvider expõe o QR code atual do whatsmeow (Fase 4 #68).
@@ -63,6 +67,10 @@ type QRCodeProvider interface {
 }
 
 // New cria os handlers.
+//
+// txRunner é opcional — se nil, Register() não embrulha em RunInTenantTx
+// (legacy behavior, OK em testes). Em prod, wire.go DEVE injetar
+// adminRepos.TxRunner (carryover Fase 8 C5).
 func New(
 	log zerolog.Logger,
 	convRepo port.ConversationRepo,
@@ -72,6 +80,7 @@ func New(
 	listSvc *ucmessaging.ListService,
 	senderReg port.SenderRegistry,
 	qrProvider QRCodeProvider,
+	txRunner port.TxRunner,
 ) *Handlers {
 	return &Handlers{
 		log:        log,
@@ -82,21 +91,34 @@ func New(
 		listSvc:    listSvc,
 		senderReg:  senderReg,
 		qrProvider: qrProvider,
+		txRunner:   txRunner,
 	}
 }
 
 // Register monta as rotas no router chi.
+//
+// Issue #133 (Sprint 0A C5 audit) + ADR-0043: cada rota é embrulhada em
+// RunInTenantTx (helper interno) que abre tx com SET LOCAL mez.tenant_id
+// para garantir RLS fail-closed. Se BearerAuth não injetou tenantID
+// (request sem JWT), retorna 401 fail-closed.
+//
+// Rollout: se h.txRunner for nil (testes/dev), passa direto sem tx
+// (legacy behavior). Em prod, wire.go DEVE injetar txRunner.
 func (h *Handlers) Register(r chi.Router) {
-	r.Get("/conversations", h.listConversations)
-	r.Get("/messages", h.listMessages)
-	r.Post("/messages", h.postMessage)
-	r.Post("/messages/{id}/reactions", h.postReaction)
-	r.Patch("/messages/{id}", h.patchMessage)
-	r.Delete("/messages/{id}", h.deleteMessage)
-	r.Post("/conversations/{id}/assign", h.conversationAssign)
-	r.Post("/conversations/{id}/resolve", h.conversationResolve)
-	r.Get("/channels/{channel}/health", h.channelHealth)
-	r.Get("/channels/whatsmeow/qrcode", h.whatsmeowQRCode)
+	r.Route("/", func(r chi.Router) {
+		r.Use(h.withTenantTxMW())
+
+		r.Get("/conversations", h.listConversations)
+		r.Get("/messages", h.listMessages)
+		r.Post("/messages", h.postMessage)
+		r.Post("/messages/{id}/reactions", h.postReaction)
+		r.Patch("/messages/{id}", h.patchMessage)
+		r.Delete("/messages/{id}", h.deleteMessage)
+		r.Post("/conversations/{id}/assign", h.conversationAssign)
+		r.Post("/conversations/{id}/resolve", h.conversationResolve)
+		r.Get("/channels/{channel}/health", h.channelHealth)
+		r.Get("/channels/whatsmeow/qrcode", h.whatsmeowQRCode)
+	})
 }
 
 // listConversations lista as conversas do tenant. Issue #126:
@@ -540,6 +562,37 @@ func TenantFromContext(ctx context.Context) (domain.TenantID, bool) {
 // e para o middleware BearerAuth.
 func ContextWithTenant(ctx context.Context, t domain.TenantID) context.Context {
 	return context.WithValue(ctx, tenantCtxKey, t)
+}
+
+// withTenantTxMW retorna middleware que embrulha cada request em
+// RunInTenantTx(tenantID, fn). Se não tem tenantID no context (sem
+// BearerAuth), retorna 401 fail-closed.
+//
+// Issue #133 (Sprint 0A C5 audit) + ADR-0043. Definido aqui (não em
+// transport/http/middleware) para evitar import cycle middleware↔api.
+func (h *Handlers) withTenantTxMW() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			tenantID, ok := TenantFromContext(r.Context())
+			if !ok {
+				http.Error(w, "unauthorized: tenant required", http.StatusUnauthorized)
+				return
+			}
+			if h.txRunner == nil {
+				// Dev/test: passa direto. Em prod, txRunner é sempre setado.
+				next.ServeHTTP(w, r)
+				return
+			}
+			err := h.txRunner.RunInTenantTx(r.Context(), tenantID, func(txCtx context.Context) error {
+				next.ServeHTTP(w, r.WithContext(txCtx))
+				return nil
+			})
+			if err != nil {
+				h.log.Error().Err(err).Msg("withTenantTxMW: tx failed")
+				http.Error(w, "internal error (tx failed)", http.StatusInternalServerError)
+			}
+		})
+	}
 }
 
 // ActorFromContext extrai o actor (sub/email do JWT) do contexto.

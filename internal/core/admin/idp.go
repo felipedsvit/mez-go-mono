@@ -16,6 +16,9 @@ type UserInfo struct {
 
 type IdP interface {
 	AuthCodeURL(state, codeChallenge string) string
+	// AuthCodeURLWithNonce inclui o nonce. IdP ecoa no claim nonce do
+	// ID-token. Issue #147 (H2 audit).
+	AuthCodeURLWithNonce(state, codeChallenge, nonce string) string
 	Exchange(ctx context.Context, code, codeVerifier string) (string, error)
 	VerifyIDToken(ctx context.Context, rawIDToken string) (UserInfo, error)
 }

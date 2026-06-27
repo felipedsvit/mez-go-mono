@@ -128,6 +128,14 @@ func (r *OutboxRepo) PendingCount(ctx context.Context) (int, error) {
 // a contenção de um único lock global e respeita o bounded-buffer.
 //
 // Iteração por tenant é aceitável para a Fase 2 (100s de tenants).
+//
+// Issue #159 (Sprint 1 A1 audit, H9 do audit 003): fix completo em
+// PR subsequente. A versão atual usa `platformPool.Query(...)` em
+// single statement — locks liberados antes do MarkSent/MarkFailed.
+// Single-process mascara o bug. Para scale-out é necessário refatorar
+// o port.OutboxRelay.ClaimNext para retornar (pgx.Tx, []Message, error)
+// em vez de apenas []Message. O AcquireClaimLock exportado em
+// outbox.go:284 é o dead code que documenta o problema.
 func (r *OutboxRepo) ClaimNext(ctx context.Context, batchSize int) ([]domain.Message, error) {
 	rows, err := r.platformPool.Query(ctx,
 		`SELECT id, tenant_id, channel, payload, attempts
