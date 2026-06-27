@@ -20,6 +20,7 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 	"github.com/felipedsvit/mez-go-mono/internal/transport/http/api"
 	apimw "github.com/felipedsvit/mez-go-mono/internal/transport/http/middleware"
+	ucmessaging "github.com/felipedsvit/mez-go-mono/internal/usecase/messaging"
 	"github.com/felipedsvit/mez-go-mono/pkg/health"
 	"github.com/felipedsvit/mez-go-mono/pkg/metrics"
 )
@@ -42,6 +43,8 @@ type Services struct {
 	TelegramHandler *telegram.Handler
 	AdminRouter     chi.Router // opcional, do adminweb
 	JWTSecret       []byte
+	SenderService   *ucmessaging.SenderService
+	SenderRegistry  port.SenderRegistry
 }
 
 // New cria o http.Handler com todas as rotas montadas.
@@ -79,7 +82,7 @@ func New(svc Services) http.Handler {
 	}
 	apiMw := apimw.BearerAuth(apimw.BearerAuthConfig{Secret: jwtSecret}, svc.Log)
 
-	apiH := api.New(svc.Log, svc.ConvRepo, svc.MsgRepo, svc.TenantRepo)
+	apiH := api.New(svc.Log, svc.ConvRepo, svc.MsgRepo, svc.TenantRepo, svc.SenderService, svc.SenderRegistry)
 	r.Route("/api", func(r chi.Router) {
 		r.Use(apiMw)
 		apiH.Register(r)

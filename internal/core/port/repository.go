@@ -59,4 +59,10 @@ type OutboxRelay interface {
 	ClaimNext(ctx context.Context, batchSize int) ([]domain.Message, error)
 	MarkSent(ctx context.Context, id domain.MessageID) error
 	MarkFailed(ctx context.Context, id domain.MessageID, err error) error
+	// GetAttempts retorna o contador de tentativas para o outbox row. Usado
+	// pelo relay para decidir MaxAttempts → DLQ.
+	GetAttempts(ctx context.Context, id domain.MessageID) (int, error)
+	// MarkDLQ move a mensagem para a dead-letter queue. Idempotente (no-op
+	// se já está em dlq).
+	MarkDLQ(ctx context.Context, id domain.MessageID, lastErr error) error
 }

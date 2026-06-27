@@ -1,16 +1,18 @@
-// Package relay implementa o relay do outbox (#38) do mez-go-mono.
+// Package relay implementa o relay do outbox (#38 + #52) do mez-go-mono.
 //
 // O relay drena mensagens em status='pending' de outbound_events e chama
-// o Sender registrado. Sender é uma interface vazia na Fase 2 (NoopSender);
-// os adapters reais (WABA, IG, Messenger, TG, WhatsMeow) são plugados na
-// Fase 3 sem mudar a infraestrutura.
+// o Sender registrado no SenderRegistry. Sender é uma interface
+// desacoplada (port.Sender) — Fase 2 usava NoopSender; Fase 3 pluga os
+// adapters reais (WABA/IG/MSG/TG) via registry.
 //
 // Política de drain (D3):
 //   - Sinal in-process via Notify() — rápido, sem latência de poll.
 //   - Poll de fallback (5s default) — cobre crash entre enqueue e notify.
 //
-// O relay também drena imediatamente no boot, cobrindo o caso de crash
-// entre commit e notify.
+// Política de retry (D3 reforço + #52):
+//   - Cada falha incrementa attempts (via MarkFailed).
+//   - Quando attempts >= MaxAttempts, mensagem vai para DLQ (MarkDLQ +
+//     bus.PublishDLQ) e não é mais retentada.
 package relay
 
 import (
@@ -22,40 +24,11 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/felipedsvit/mez-go-mono/internal/adapter/broker"
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
+	"github.com/felipedsvit/mez-go-mono/internal/core/event"
 	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 )
-
-// Sender é a porta outbound. A Fase 2 usa NoopSender; Fase 3 implementa
-// os adapters reais.
-type Sender interface {
-	Send(ctx context.Context, m domain.Message) (providerMsgID string, err error)
-}
-
-// NoopSender é o Sender default da Fase 2: loga warn e retorna
-// ErrSenderNotImplemented. O relay trata esse erro especialmente: deixa
-// a mensagem em pending e tenta de novo no próximo tick.
-type NoopSender struct {
-	log zerolog.Logger
-}
-
-// NewNoopSender cria o sender noop.
-func NewNoopSender(log zerolog.Logger) *NoopSender {
-	return &NoopSender{log: log}
-}
-
-// ErrSenderNotImplemented é retornado pelo NoopSender.
-var ErrSenderNotImplemented = errors.New("sender não registrado (fase 3)")
-
-// Send implementa Sender. Loga warn e retorna o erro sentinel.
-func (n *NoopSender) Send(ctx context.Context, m domain.Message) (string, error) {
-	n.log.Warn().
-		Str("tenant", string(m.TenantID)).
-		Str("message", string(m.ID)).
-		Str("channel", string(m.Channel)).
-		Msg("outbox: noop sender; mensagem permanece pending (fase 3 implementa adapter)")
-	return "", ErrSenderNotImplemented
-}
 
 // Config configura o relay.
 type Config struct {
@@ -66,10 +39,11 @@ type Config struct {
 
 // Relay é o loop de drain.
 type Relay struct {
-	outbox port.OutboxRelay
-	sender Sender
-	cfg    Config
-	log    zerolog.Logger
+	outbox   port.OutboxRelay
+	registry port.SenderRegistry
+	bus      *broker.Bus
+	cfg      Config
+	log      zerolog.Logger
 
 	notifyCh chan struct{}
 	stopCh   chan struct{}
@@ -77,8 +51,9 @@ type Relay struct {
 	wg       sync.WaitGroup
 }
 
-// New cria o relay.
-func New(outbox port.OutboxRelay, sender Sender, cfg Config, log zerolog.Logger) *Relay {
+// New cria o relay. registry pode ser nil na Fase 2 (Noop); Fase 3 sempre
+// passa registry. bus pode ser nil se o caller não quer DLQ events.
+func New(outbox port.OutboxRelay, registry port.SenderRegistry, bus *broker.Bus, cfg Config, log zerolog.Logger) *Relay {
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 5 * time.Second
 	}
@@ -90,7 +65,8 @@ func New(outbox port.OutboxRelay, sender Sender, cfg Config, log zerolog.Logger)
 	}
 	return &Relay{
 		outbox:   outbox,
-		sender:   sender,
+		registry: registry,
+		bus:      bus,
 		cfg:      cfg,
 		log:      log,
 		notifyCh: make(chan struct{}, 1),
@@ -108,14 +84,11 @@ func (r *Relay) Notify() {
 }
 
 // Run inicia o loop. Bloqueia até ctx ser cancelado ou Stop() chamado.
-//
-// Comportamento:
-//   - Drena imediatamente no start (cobre crash entre enqueue e notify).
-//   - Depois, alterna entre sinal (notifyCh) e poll (ticker).
 func (r *Relay) Run(ctx context.Context) error {
 	r.log.Info().
 		Dur("poll_interval", r.cfg.PollInterval).
 		Int("batch_size", r.cfg.BatchSize).
+		Int("max_attempts", r.cfg.MaxAttempts).
 		Msg("outbox relay: starting")
 
 	// Boot: drena tudo (D3 + C1).
@@ -179,26 +152,38 @@ func (r *Relay) drain(ctx context.Context) error {
 
 // process tenta enviar uma mensagem. Marca sent/failed/dlq conforme resultado.
 func (r *Relay) process(ctx context.Context, m domain.Message) {
-	providerID, err := r.sender.Send(ctx, m)
-
-	// NoopSender: deixa pending e loga warn; tenta de novo no próximo tick.
-	if errors.Is(err, ErrSenderNotImplemented) {
+	// Sem registry: nada a fazer. (Fase 2 behaviour; log e deixa pending.)
+	if r.registry == nil {
 		r.log.Warn().
 			Str("message", string(m.ID)).
-			Str("channel", string(m.Channel)).
-			Msg("outbox: sender noop; mensagem permanece pending")
+			Msg("outbox: registry nil; mensagem permanece pending")
 		return
 	}
 
+	sender, err := r.registry.Get(ctx, m.TenantID, m.Channel)
 	if err != nil {
-		// Marca failed e checa attempts.
-		if markErr := r.outbox.MarkFailed(ctx, m.ID, err); markErr != nil {
-			r.log.Error().Err(markErr).Str("message", string(m.ID)).Msg("outbox: mark failed")
-		}
-		r.log.Warn().Err(err).Str("message", string(m.ID)).Msg("outbox: send failed")
+		// Sender não registrado → registra como failed (vai tentar de novo
+		// na próxima vez que o registry for populado). Se o canal realmente
+		// não existe, MaxAttempts vai movê-lo para DLQ.
+		r.markFailed(ctx, m.ID, fmt.Errorf("registry: %w", err))
+		return
+	}
 
-		// Verifica se atingiu MaxAttempts para mover para DLQ.
-		// (Fase 2: simplificado — não lemos attempts aqui; deixamos para Fase 3.)
+	req := port.OutboundRequest{
+		TenantID:       m.TenantID,
+		Channel:        m.Channel,
+		MessageID:      m.ID,
+		ConversationID: m.ConversationID,
+		ContactID:      m.ContactID,
+		PeerID:         string(m.ContactID),
+		Type:           m.Type,
+		Body:           m.Body,
+		Metadata:       m.Metadata,
+	}
+
+	providerID, err := sender.Send(ctx, req)
+	if err != nil {
+		r.handleSendError(ctx, m, err)
 		return
 	}
 
@@ -211,4 +196,46 @@ func (r *Relay) process(ctx context.Context, m domain.Message) {
 		Str("channel", string(m.Channel)).
 		Str("provider_id", providerID).
 		Msg("outbox: sent")
+}
+
+// handleSendError trata o erro de Send: incrementa attempts e, se atingiu
+// MaxAttempts, move para DLQ.
+func (r *Relay) handleSendError(ctx context.Context, m domain.Message, sendErr error) {
+	r.markFailed(ctx, m.ID, sendErr)
+
+	attempts, err := r.outbox.GetAttempts(ctx, m.ID)
+	if err != nil {
+		r.log.Error().Err(err).Str("message", string(m.ID)).Msg("outbox: get attempts")
+		return
+	}
+
+	if attempts >= r.cfg.MaxAttempts {
+		if err := r.outbox.MarkDLQ(ctx, m.ID, sendErr); err != nil {
+			r.log.Error().Err(err).Str("message", string(m.ID)).Msg("outbox: mark dlq")
+			return
+		}
+		r.log.Warn().
+			Str("message", string(m.ID)).
+			Str("channel", string(m.Channel)).
+			Int("attempts", attempts).
+			Err(sendErr).
+			Msg("outbox: dlq after max attempts")
+		if r.bus != nil {
+			r.bus.PublishDLQ(event.DLQEvent{
+				TenantID:  string(m.TenantID),
+				Channel:   event.Channel(m.Channel),
+				MessageID: string(m.ID),
+				Error:     sendErr.Error(),
+			})
+		}
+	}
+}
+
+// markFailed é um helper que loga erros de MarkFailed (não os propaga para
+// não parar o drain).
+func (r *Relay) markFailed(ctx context.Context, id domain.MessageID, sendErr error) {
+	if err := r.outbox.MarkFailed(ctx, id, sendErr); err != nil {
+		r.log.Error().Err(err).Str("message", string(id)).Msg("outbox: mark failed")
+	}
+	r.log.Warn().Err(sendErr).Str("message", string(id)).Msg("outbox: send failed")
 }

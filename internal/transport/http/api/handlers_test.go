@@ -93,7 +93,7 @@ func newRouter(h *Handlers) *chi.Mux {
 }
 
 func TestListConversations_RequiresTenant(t *testing.T) {
-	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{})
+	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -114,7 +114,7 @@ func TestListConversations_OK(t *testing.T) {
 		Status:    domain.ConvStatusOpen,
 	}
 
-	h := New(zerolog.Nop(), convRepo, &fakeMsgRepo{}, &fakeTenantRepo{})
+	h := New(zerolog.Nop(), convRepo, &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -134,8 +134,10 @@ func TestListConversations_OK(t *testing.T) {
 	}
 }
 
-func TestPostMessage_Returns501(t *testing.T) {
-	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{})
+func TestPostMessage_RequiresFields(t *testing.T) {
+	// Fase 3: POST /api/messages é real; sem sender service retorna 503,
+	// com body inválido retorna 400.
+	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -144,13 +146,14 @@ func TestPostMessage_Returns501(t *testing.T) {
 	req = req.WithContext(ContextWithTenant(req.Context(), "tenant-1"))
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("status = %d, want 501", rec.Code)
+	// sem sender: 503; sem campos: 400 — sem body válido: 400 ou 503.
+	if rec.Code != http.StatusBadRequest && rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 400 or 503", rec.Code)
 	}
 }
 
 func TestListMessages_RequiresConversationID(t *testing.T) {
-	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{})
+	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -169,7 +172,7 @@ func TestConversationResolve_UpdatesStatus(t *testing.T) {
 		ID: "c1", Channel: domain.ChannelWABA, ContactID: "co1", Status: domain.ConvStatusOpen,
 	}
 
-	h := New(zerolog.Nop(), convRepo, &fakeMsgRepo{}, &fakeTenantRepo{})
+	h := New(zerolog.Nop(), convRepo, &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -187,8 +190,9 @@ func TestConversationResolve_UpdatesStatus(t *testing.T) {
 	}
 }
 
-func TestChannelHealth_OK(t *testing.T) {
-	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{})
+func TestChannelHealth_RequiresTenant(t *testing.T) {
+	// Fase 3: health agora exige tenant no contexto.
+	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -198,7 +202,7 @@ func TestChannelHealth_OK(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 (no tenant)", rec.Code)
 	}
 }

@@ -8,12 +8,13 @@
 //  5. Repos
 //  6. Bus
 //  7. Ingestor + Router
-//  8. OutboxRepo + Relay (Sender noop na Fase 2)
+//  8. OutboxRepo + SenderRegistry + Relay (Fase 3)
 //  9. InboundEventsRepo + Reconciler
 //
-// 10. Webhook handlers (Meta + Telegram)
-// 11. API handlers
-// 12. HTTP server
+// 10. SenderService + StatusConsumer
+// 11. Webhook handlers (Meta + Telegram)
+// 12. API handlers
+// 13. HTTP server
 //
 // Graceful shutdown (D10 + C12): signal → HTTP Shutdown → bus Drain →
 // relay Flush → reconciler Stop → pools close.
@@ -32,12 +33,14 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/broker"
+	providerregistry "github.com/felipedsvit/mez-go-mono/internal/adapter/provider/registry"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/meta"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/secrets"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/telegram"
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 	"github.com/felipedsvit/mez-go-mono/internal/core/event"
+	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 	httpserver "github.com/felipedsvit/mez-go-mono/internal/transport/http/server"
 	ucmessaging "github.com/felipedsvit/mez-go-mono/internal/usecase/messaging"
 	ucoutbox "github.com/felipedsvit/mez-go-mono/internal/usecase/outbox"
@@ -63,6 +66,12 @@ type AppContext struct {
 	ConvRepo   *postgres.ConversationRepo
 	MsgRepo    *postgres.MessageRepo
 	TenantRepo *postgres.TenantRepo
+
+	// Sender pipeline (Fase 3)
+	SenderRegistry port.SenderRegistry
+	SenderService  *ucmessaging.SenderService
+	StatusConsumer *ucmessaging.StatusConsumer
+	Credentials    *secrets.EnvCredentials
 
 	// Usecases
 	Ingestor   *ucmessaging.Ingestor
@@ -135,16 +144,30 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		_ = routerSvc
 	})
 
-	// 8. Outbox Relay (Sender noop na Fase 2).
-	sender := ucoutbox.NewNoopSender(log)
+	// 8. Sender pipeline (Fase 3): credentials + registry + service + relay.
+	creds, err := secrets.NewEnvCredentials()
+	if err != nil {
+		return nil, fmt.Errorf("load credentials: %w", err)
+	}
+	resolver := port.NewResolver()
+	resolver.Register(domain.ChannelWABA, port.CapabilitiesWABA())
+	resolver.Register(domain.ChannelIG, port.CapabilitiesInstagram())
+	resolver.Register(domain.ChannelMSG, port.CapabilitiesMessenger())
+	resolver.Register(domain.ChannelTGBot, port.CapabilitiesTelegram())
+	senderRegistry := providerregistry.Build(creds, log)
+
 	pollInterval, err := time.ParseDuration(cfg.OutboxPollInterval)
 	if err != nil || pollInterval <= 0 {
 		pollInterval = 5 * time.Second
 	}
-	relay := ucoutbox.New(outboxRepo, sender, ucoutbox.Config{
+	relay := ucoutbox.New(outboxRepo, senderRegistry, bus, ucoutbox.Config{
 		PollInterval: pollInterval,
 		BatchSize:    cfg.OutboxBatch,
 	}, log)
+
+	senderSvc := ucmessaging.NewSenderService(msgRepo, outboxRepo, resolver, relay, log)
+	statusConsumer := ucmessaging.NewStatusConsumer(bus, msgRepo, log)
+	statusConsumer.Subscribe()
 
 	// 9. Reconciler.
 	reconcileInterval, err := time.ParseDuration(cfg.ReconcileInterval)
@@ -192,6 +215,8 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		TelegramHandler: tgH,
 		AdminRouter:     nil, // adminweb é montado separado em main
 		JWTSecret:       jwtSecret,
+		SenderService:   senderSvc,
+		SenderRegistry:  senderRegistry,
 	})
 	srv := &http.Server{
 		Addr:         cfg.HTTPAddr,
@@ -205,6 +230,8 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		Log: log, Cfg: cfg, Health: hc, Metrics: metricsReg, Bus: bus, TxRunner: txRunner,
 		Outbox: outboxRepo, InboundEvs: inboundEvsRepo,
 		ConvRepo: convRepo, MsgRepo: msgRepo, TenantRepo: tenantRepo,
+		SenderRegistry: senderRegistry, SenderService: senderSvc,
+		StatusConsumer: statusConsumer, Credentials: creds,
 		Ingestor: ingestor, Router: routerSvc, Relay: relay, Reconciler: reconciler,
 		MetaHandler: metaH, TelegramHandler: tgH, HTTPServer: srv,
 	}, nil
