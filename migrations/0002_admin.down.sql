@@ -1,0 +1,9 @@
+BEGIN;
+
+DROP TABLE IF EXISTS admin_audit_log CASCADE;
+DROP TABLE IF EXISTS admin_user_roles CASCADE;
+DROP TABLE IF EXISTS admin_role_permissions CASCADE;
+DROP TABLE IF EXISTS admin_roles CASCADE;
+DROP TABLE IF EXISTS admin_users CASCADE;
+
+COMMIT;

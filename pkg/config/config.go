@@ -22,7 +22,11 @@ type Config struct {
 	S3SecretKey        string `mapstructure:"s3_secret_key"`
 	OIDCIssuer         string `mapstructure:"oidc_issuer"`
 	OIDCClientID       string `mapstructure:"oidc_client_id"`
+	OIDCClientSecret   string `mapstructure:"oidc_client_secret"`
+	OIDCRedirectURL    string `mapstructure:"oidc_redirect_url"`
 	SessionSecret      string `mapstructure:"session_secret"`
+	SessionTTL         string `mapstructure:"session_ttl"`
+	AdminDBURL         string `mapstructure:"admin_database_url"`
 	BusInboundBuf      int    `mapstructure:"bus_inbound_buffer"`
 	BusOutboundBuf     int    `mapstructure:"bus_outbound_buffer"`
 	ReconcileInterval  string `mapstructure:"reconcile_interval"`
@@ -49,6 +53,7 @@ func Load() (Config, error) {
 	v.SetDefault("metrics_addr", ":9090")
 	v.SetDefault("s3_bucket", "mezgo-media")
 	v.SetDefault("s3_backup_bucket", "mezgo-backups")
+	v.SetDefault("session_ttl", "24h")
 
 	cfg := Config{}
 	if err := v.Unmarshal(&cfg); err != nil {

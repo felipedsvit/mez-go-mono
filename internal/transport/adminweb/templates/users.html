@@ -1,0 +1,44 @@
+{{define "content"}}
+<h1>Users</h1>
+<div class="card">
+    <div style="margin-bottom:15px">
+        <a href="/admin/users/new" class="btn btn-primary">Invite User</a>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Email</th>
+                <th>Name</th>
+                <th>Auth</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Data}}
+            <tr>
+                <td>{{.Email}}</td>
+                <td>{{.Name}}</td>
+                <td>{{.AuthKind}}</td>
+                <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+                <td>{{.CreatedAt.Format "2006-01-02"}}</td>
+                <td>
+                    <form method="POST" action="/admin/users/{{.ID}}/status" style="display:inline">
+                        {{if eq .Status "active"}}
+                        <input type="hidden" name="status" value="disabled">
+                        <button type="submit" class="btn btn-danger btn-sm">Disable</button>
+                        {{else}}
+                        <input type="hidden" name="status" value="active">
+                        <button type="submit" class="btn btn-primary btn-sm">Activate</button>
+                        {{end}}
+                    </form>
+                </td>
+            </tr>
+            {{else}}
+            <tr><td colspan="6" class="text-center">No users found</td></tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
