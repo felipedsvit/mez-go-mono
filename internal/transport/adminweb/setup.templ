@@ -1,0 +1,29 @@
+package adminweb
+
+// /setup wizard — issue #16. Visible only when 0 admins exist.
+// Uses htmx (hx-post) for progressive enhancement; full-page POST also works
+// (the handler accepts both regular form posts and htmx requests).
+templ setupPage(errorMsg string) {
+	@base("Setup") {
+		<h1>Initial setup</h1>
+		if errorMsg != "" {
+			<div class="alert alert-error" role="alert">{ errorMsg }</div>
+		}
+		<p>Create the first admin account. This page is only available until the first admin is created.</p>
+		<form method="post" action="/setup" hx-post="/setup" hx-target="body" hx-swap="outerHTML">
+			<label>
+				Email
+				<input type="email" name="email" required autocomplete="email"/>
+			</label>
+			<label>
+				Password (min 8 characters)
+				<input type="password" name="password" required minlength="8" autocomplete="new-password"/>
+			</label>
+			<label>
+				Confirm password
+				<input type="password" name="password_confirm" required minlength="8" autocomplete="new-password"/>
+			</label>
+			<button type="submit">Create admin</button>
+		</form>
+	}
+}

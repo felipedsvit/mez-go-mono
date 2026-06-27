@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/broker"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres"
+	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb"
 	"github.com/felipedsvit/mez-go-mono/pkg/config"
 	"github.com/felipedsvit/mez-go-mono/pkg/health"
 	"github.com/felipedsvit/mez-go-mono/pkg/logger"
@@ -62,12 +64,14 @@ func runServe(cfg config.Config, log zerolog.Logger) {
 
 	appPool, err := postgres.ConnectPool(ctx, cfg.DatabaseURL, 20)
 	if err != nil {
+		cancel()
 		log.Fatal().Err(err).Msg("connect app pool")
 	}
 	defer appPool.Close()
 
 	platformPool, err := postgres.ConnectPool(ctx, cfg.PlatformDBURL, 10)
 	if err != nil {
+		cancel()
 		log.Fatal().Err(err).Msg("connect platform pool")
 	}
 	defer platformPool.Close()
@@ -86,7 +90,6 @@ func runServe(cfg config.Config, log zerolog.Logger) {
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
@@ -94,7 +97,15 @@ func runServe(cfg config.Config, log zerolog.Logger) {
 	r.Get("/health", health.LiveHandler())
 	r.Get("/readyz", health.ReadyHandler(healthChecker))
 	r.Get("/metrics", metricsReg.Handler().ServeHTTP)
-	r.Get("/setup", setupHandler(log))
+
+	// Static assets (htmx placeholder, css).
+	staticSub, _ := fs.Sub(adminweb.Assets(), "static")
+	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+
+	// /setup wizard (issue #16). 404 once an admin exists.
+	setupH := adminweb.NewSetupHandler(appPool, log)
+	r.Get("/setup", setupH.Get)
+	r.Post("/setup", setupH.Post)
 
 	srv := &http.Server{
 		Addr:         cfg.HTTPAddr,
@@ -129,20 +140,4 @@ func runServe(cfg config.Config, log zerolog.Logger) {
 	}
 
 	log.Info().Msg("server stopped")
-}
-
-func setupHandler(log zerolog.Logger) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<!DOCTYPE html>
-<html><body>
-<h1>Mez Go Mono Setup</h1>
-<p>Setup wizard will be implemented in Phase 1 (auth).</p>
-<form method="POST" action="/setup">
-<label>Email: <input type="email" name="email" required></label><br>
-<label>Password: <input type="password" name="password" required minlength="8"></label><br>
-<button type="submit">Create Admin</button>
-</form>
-</body></html>`))
-	}
 }

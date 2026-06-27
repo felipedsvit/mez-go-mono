@@ -1,0 +1,64 @@
+# golangci-lint configuration for mez-go-mono.
+# Reference: README §19, father mez-go .golangci.yml.
+#
+# Run: make lint
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck        # unchecked errors in if/for/switch/return
+    - govet           # standard vet
+    - ineffassign     # unused assignments
+    - staticcheck     # static analysis (covers unused, deadcode, etc.)
+    - unused          # unused identifiers
+    - gocritic        # opinionated style/perf checks
+    - misspell        # English spellcheck in comments/strings
+    - bodyclose       # http.Response.Body.Close() missing
+    - contextcheck    # context propagation
+    - errorlint       # fmt.Errorf with %w
+    - gosec           # security hotspots
+    - dupl            # duplicate code
+    - prealloc        # slice pre-allocation
+    - nilerr          # returning nil after handling err
+    - predeclared     # shadowing of predeclared identifiers
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  gosec:
+    excludes:
+      - G104  # unchecked err — already covered by errcheck
+  misspell:
+    locale: US
+
+issues:
+  exclude-rules:
+    # Allow anonymous imports of drivers without doc-comment.
+    - path: cmd/
+      linters:
+        - staticcheck
+        - errcheck
+    # Tests can have unused parameters (t *testing.T).
+    - path: _test\.go
+      linters:
+        - prealloc
+        - errcheck
+    # Generated templ files — contextcheck linter doesn't understand templ's
+    # GeneratedTemplate closure pattern.
+    - path: _templ\.go
+      linters:
+        - contextcheck
+    # Generated oapi-codegen files.
+    - path: openapi\.gen\.go
+      linters:
+        - staticcheck
+        - errcheck
+        - gosec
+        - dupl
+  max-issues-per-linter: 0
+  max-same-issues: 0
