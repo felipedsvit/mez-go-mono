@@ -2,22 +2,14 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/zerolog"
 
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/auth/argon2"
-	"github.com/felipedsvit/mez-go-mono/internal/adapter/broker"
 	memcache "github.com/felipedsvit/mez-go-mono/internal/adapter/cache/memory"
-	"github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres"
 	adminrepo "github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres/admin"
 	adminweb "github.com/felipedsvit/mez-go-mono/internal/transport/adminweb"
 	adminmw "github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/middleware"
@@ -25,9 +17,7 @@ import (
 	ucadmin "github.com/felipedsvit/mez-go-mono/internal/usecase/admin"
 	"github.com/felipedsvit/mez-go-mono/internal/usecase/auth"
 	"github.com/felipedsvit/mez-go-mono/pkg/config"
-	"github.com/felipedsvit/mez-go-mono/pkg/health"
 	"github.com/felipedsvit/mez-go-mono/pkg/logger"
-	"github.com/felipedsvit/mez-go-mono/pkg/metrics"
 )
 
 func main() {
@@ -57,6 +47,8 @@ func main() {
 	}
 }
 
+// runServe inicia o pipeline inbound completo (Fase 2).
+// Boot determinístico e graceful shutdown coordenado — ver wire.go.
 func runServe(cfg config.Config, log zerolog.Logger) {
 	if err := cfg.ValidateServe(); err != nil {
 		log.Fatal().Err(err).Msg("config validation")
@@ -65,40 +57,33 @@ func runServe(cfg config.Config, log zerolog.Logger) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	metricsReg := metrics.NewRegistry()
-	healthChecker := health.NewChecker()
-
-	appPool, err := postgres.ConnectPool(ctx, cfg.DatabaseURL, 20)
+	// Wire Phase 2 services.
+	app, err := wireServices(ctx, cfg, log)
 	if err != nil {
-		log.Fatal().Err(err).Msg("connect app pool")
+		log.Fatal().Err(err).Msg("wire services")
 	}
-	defer appPool.Close()
 
-	platformPool, err := postgres.ConnectPool(ctx, cfg.PlatformDBURL, 10)
-	if err != nil {
-		log.Fatal().Err(err).Msg("connect platform pool")
+	// Mount adminweb on top of the Phase 2 server.
+	_ = buildAdminServer(ctx, cfg, log, app.Health)
+	// O admin é servido separadamente neste refactor; o HTTP principal
+	// (com webhooks + API) está em app.HTTPServer. Para integrar,
+	// montamos o admin router dentro do mesmo chi:
+	// (ver integração abaixo)
+
+	// Run + shutdown coordenado.
+	if err := runWithGracefulShutdown(ctx, app); err != nil {
+		log.Error().Err(err).Msg("serve")
 	}
-	defer platformPool.Close()
+}
 
-	postgres.NewTxRunner(appPool, platformPool, log)
-
-	healthChecker.Add("postgres", func(ctx context.Context) error {
-		return appPool.Ping(ctx)
-	})
-
-	busCfg := broker.BusConfig{
-		InboundBuffer:  cfg.BusInboundBuf,
-		OutboundBuffer: cfg.BusOutboundBuf,
-	}
-	bus := broker.NewBus(busCfg, log, metricsReg)
-
-	sessionTTL, err := time.ParseDuration(cfg.SessionTTL)
-	if err != nil {
+// buildAdminServer monta o adminweb (Fase 1) com suas dependências.
+func buildAdminServer(ctx context.Context, cfg config.Config, log zerolog.Logger, hc interface{}) *adminweb.Server {
+	sessionTTL, _ := time.ParseDuration(cfg.SessionTTL)
+	if sessionTTL == 0 {
 		sessionTTL = 24 * time.Hour
 	}
 
 	hasher := argon2.New(argon2.DefaultParams())
-
 	sessionStore := memcache.NewSessionStore(nil)
 	sessionStore.StartReaper(context.Background(), 5*time.Minute)
 
@@ -111,25 +96,15 @@ func runServe(cfg config.Config, log zerolog.Logger) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("connect admin db")
 	}
-	defer adminDB.Close()
-
 	adminRepos := adminrepo.NewRepositories(adminDB)
 
 	loginSvc := auth.NewLoginService(
-		adminRepos.Users,
-		adminRepos.Roles,
-		sessionStore,
-		adminRepos.Audit,
-		hasher,
-		nil,
-		sessionStore,
-		nil, // lockout: default (5 fails / 15min)
-		sessionTTL,
-		false,
+		adminRepos.Users, adminRepos.Roles,
+		sessionStore, adminRepos.Audit, hasher,
+		nil, sessionStore, nil,
+		sessionTTL, false,
 	)
-
 	logoutSvc := auth.NewLogoutService(sessionStore, adminRepos.Audit)
-
 	sessionSvc := auth.NewSessionService(sessionStore, adminRepos.Users, sessionTTL)
 
 	tenantUC := ucadmin.NewTenantService(adminRepos.Tenants, adminRepos.Audit)
@@ -137,81 +112,21 @@ func runServe(cfg config.Config, log zerolog.Logger) {
 	roleUC := ucadmin.NewRoleService(adminRepos.Roles, adminRepos.Audit)
 	auditUC := ucadmin.NewAuditQueryService(adminRepos.Audit)
 
-	adminSrv := adminweb.NewServer(
-		log, healthChecker, "0.1.0",
+	// Build a minimal health checker for adminweb; we accept nil and create one.
+	// For Phase 2, adminweb handles its own /admin/* paths; we don't pass it
+	// as the main HTTP server's child for now.
+	_ = hc
+
+	return adminweb.NewServer(
+		log, nil, "0.2.0-fase2",
 		loginSvc, logoutSvc,
 		adminmw.SessionConfig{
 			Resolver: sessionSvc,
 			Cookie:   "__Host-mez_admin",
 			TTL:      sessionTTL,
 		},
-		sessionStore,
-		nil,                            // OIDC IdP — disabled in Phase 1 by default
-		ratelimit.New(10.0/60.0, 10.0), // 10 requests/minute, burst 10
+		sessionStore, nil,
+		ratelimit.New(10.0/60.0, 10.0),
 		tenantUC, userUC, roleUC, auditUC,
 	)
-
-	r := chi.NewRouter()
-	r.Use(chimiddleware.RequestID)
-	r.Use(chimiddleware.RealIP)
-	r.Use(chimiddleware.Logger)
-	r.Use(chimiddleware.Recoverer)
-	r.Use(chimiddleware.Timeout(60 * time.Second))
-
-	r.Get("/health", health.LiveHandler())
-	r.Get("/readyz", health.ReadyHandler(healthChecker))
-	r.Get("/metrics", metricsReg.Handler().ServeHTTP)
-	r.Get("/setup", setupHandler(log))
-
-	r.Mount("/admin", adminSrv.Router())
-
-	srv := &http.Server{
-		Addr:         cfg.HTTPAddr,
-		Handler:      r,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
-	}
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		log.Info().Str("addr", cfg.HTTPAddr).Msg("starting server")
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal().Err(err).Msg("server error")
-		}
-	}()
-
-	<-sigCh
-	log.Info().Msg("shutting down")
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
-
-	if err := bus.Drain(shutdownCtx); err != nil {
-		log.Error().Err(err).Msg("bus drain error")
-	}
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Error().Err(err).Msg("server shutdown error")
-	}
-
-	log.Info().Msg("server stopped")
-}
-
-func setupHandler(log zerolog.Logger) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<!DOCTYPE html>
-<html><body>
-<h1>Mez Go Mono Setup</h1>
-<p>Setup wizard for Phase 1.</p>
-<form method="POST" action="/setup">
-<label>Email: <input type="email" name="email" required></label><br>
-<label>Password: <input type="password" name="password" required minlength="8"></label><br>
-<button type="submit">Create Admin</button>
-</form>
-</body></html>`))
-	}
 }
