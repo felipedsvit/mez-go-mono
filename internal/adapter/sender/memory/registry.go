@@ -1,51 +1,64 @@
-// Package port — sender_registry.go: implementação in-memory do
-// SenderRegistry (Fase 3 #52). Cache com TTL; lazy init por (tenant, channel).
-package port
+// Package memory implementa o SenderRegistry in-memory default para o
+// mez-go-mono. Issue #121: este é o único local onde o tipo concreto vive
+// — o port mantém apenas a interface SenderRegistry.
+//
+// Thread-safe. Cache com TTL por (tenant, channel). Factories lazy.
+package memory
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog"
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
+	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 )
 
-// ErrSenderNotRegistered é retornado quando o channel não tem factory.
-var ErrSenderNotRegistered = errors.New("sender não registrado para o canal")
+// ErrSenderNotRegistered é um alias para port.ErrSenderNotRegistered,
+// exposto aqui para que callers que já importam memory não precisem
+// importar port. Issue #121.
+var ErrSenderNotRegistered = port.ErrSenderNotRegistered
 
 // cacheEntry guarda um Sender + tempo de criação. TTL eviction em Get.
 type cacheEntry struct {
-	sender     Sender
+	sender     port.Sender
 	tenantID   domain.TenantID
 	expiration time.Time
 }
 
-// MemorySenderRegistry é a implementação default. Thread-safe.
-type MemorySenderRegistry struct {
+// cacheKey identifica um Sender cached por (tenant, channel).
+type cacheKey struct {
+	tenant  domain.TenantID
+	channel domain.Channel
+}
+
+// Registry é a implementação default. Thread-safe.
+//
+// O nome do tipo é Registry (não SenderRegistry) para evitar colisão
+// com a interface port.SenderRegistry.
+//
+// Movida de port.MemorySenderRegistry em #121: capability matrix é
+// responsabilidade do port, mas a implementação concreta (mutex, cache,
+// logger) é do adapter.
+type Registry struct {
 	mu        sync.RWMutex
-	factories map[domain.Channel]SenderFactory
+	factories map[domain.Channel]port.SenderFactory
 	cache     map[cacheKey]*cacheEntry
 	ttl       time.Duration
 	log       zerolog.Logger
 	now       func() time.Time
 }
 
-type cacheKey struct {
-	tenant  domain.TenantID
-	channel domain.Channel
-}
-
-// NewMemorySenderRegistry cria a registry com TTL (default 5min) e clock
-// injetável (testes usam clock fixo).
-func NewMemorySenderRegistry(log zerolog.Logger, ttl time.Duration) *MemorySenderRegistry {
+// New cria a registry com TTL (default 5min) e clock injetável (testes
+// usam clock fixo).
+func New(log zerolog.Logger, ttl time.Duration) *Registry {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
-	return &MemorySenderRegistry{
-		factories: make(map[domain.Channel]SenderFactory),
+	return &Registry{
+		factories: make(map[domain.Channel]port.SenderFactory),
 		cache:     make(map[cacheKey]*cacheEntry),
 		ttl:       ttl,
 		log:       log,
@@ -53,8 +66,11 @@ func NewMemorySenderRegistry(log zerolog.Logger, ttl time.Duration) *MemorySende
 	}
 }
 
+// Compile-time check: Registry satisfaz port.SenderRegistry.
+var _ port.SenderRegistry = (*Registry)(nil)
+
 // Register associa uma factory a um channel.
-func (r *MemorySenderRegistry) Register(channel domain.Channel, factory SenderFactory) {
+func (r *Registry) Register(channel domain.Channel, factory port.SenderFactory) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.factories[channel] = factory
@@ -63,7 +79,7 @@ func (r *MemorySenderRegistry) Register(channel domain.Channel, factory SenderFa
 // Get retorna o Sender para (tenant, channel). Cria on-demand na primeira
 // chamada; cachea por TTL. Retorna ErrSenderNotRegistered se o channel
 // não tem factory.
-func (r *MemorySenderRegistry) Get(ctx context.Context, tenantID domain.TenantID, channel domain.Channel) (Sender, error) {
+func (r *Registry) Get(ctx context.Context, tenantID domain.TenantID, channel domain.Channel) (port.Sender, error) {
 	key := cacheKey{tenant: tenantID, channel: channel}
 	now := r.now()
 
@@ -103,7 +119,7 @@ func (r *MemorySenderRegistry) Get(ctx context.Context, tenantID domain.TenantID
 }
 
 // Channels retorna os channels com factory registrada.
-func (r *MemorySenderRegistry) Channels() []domain.Channel {
+func (r *Registry) Channels() []domain.Channel {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]domain.Channel, 0, len(r.factories))
@@ -118,7 +134,7 @@ func (r *MemorySenderRegistry) Channels() []domain.Channel {
 // para canais com sessão (Telegram bot), Connect é chamado (best-effort).
 //
 // Não envia mensagem real — só testa a factory.
-func (r *MemorySenderRegistry) Health(ctx context.Context, tenantID domain.TenantID) map[domain.Channel]error {
+func (r *Registry) Health(ctx context.Context, tenantID domain.TenantID) map[domain.Channel]error {
 	r.mu.RLock()
 	channels := make([]domain.Channel, 0, len(r.factories))
 	for ch := range r.factories {

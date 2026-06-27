@@ -58,7 +58,7 @@ func (a *Adapter) Channel() domain.Channel { return domain.ChannelWAWeb }
 // (groups/newsletters/communities/privacy/blocklist/disappearing declarados
 // como planejados; o envio retorna ErrNotImplemented — carryover.)
 func (a *Adapter) Capabilities() port.CapabilitySet {
-	return port.CapabilitiesWhatsMeow()
+	return WhatsmeowCapabilities()
 }
 
 // IsConnected retorna o estado atual (atômico).

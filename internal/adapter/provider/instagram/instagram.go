@@ -55,7 +55,7 @@ func New(tenant domain.TenantID, client *Client, log zerolog.Logger) *Adapter {
 func (a *Adapter) Channel() domain.Channel { return domain.ChannelIG }
 
 // Capabilities retorna o set.
-func (a *Adapter) Capabilities() port.CapabilitySet { return port.CapabilitiesInstagram() }
+func (a *Adapter) Capabilities() port.CapabilitySet { return InstagramCapabilities() }
 
 // Send entrega mensagem ou ação.
 func (a *Adapter) Send(ctx context.Context, req port.OutboundRequest) (string, error) {

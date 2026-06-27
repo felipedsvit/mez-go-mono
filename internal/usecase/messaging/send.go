@@ -14,7 +14,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
@@ -71,6 +70,10 @@ func NewSenderService(
 }
 
 // Send persiste e enfileira uma mensagem outbound.
+//
+// Issue #126: a Message é criada via factory domain.NewOutboundMessage
+// (issue #125 — comportamento no domain) e o OutboxMessage é enfileirado
+// via domain.NewOutboxMessage + Enqueue (não mais Insert de Message cru).
 func (s *SenderService) Send(ctx context.Context, req SendRequest) (domain.Message, error) {
 	if req.TenantID == "" {
 		return domain.Message{}, fmt.Errorf("tenant_id required")
@@ -88,43 +91,33 @@ func (s *SenderService) Send(ctx context.Context, req SendRequest) (domain.Messa
 		req.Type = domain.MessageTypeText
 	}
 
-	msgID := domain.MessageID(uuid.NewString())
-	now := time.Now().UTC()
-
-	msg := domain.Message{
-		ID:             msgID,
-		TenantID:       req.TenantID,
-		Channel:        req.Channel,
-		ConversationID: req.ConversationID,
-		ContactID:      req.ContactID,
-		Direction:      domain.DirectionOutbound,
-		Type:           req.Type,
-		Status:         domain.MessageStatusNotified,
-		Body:           req.Body,
-		Metadata:       req.Metadata,
-		CreatedAt:      now,
-		UpdatedAt:      now,
+	msg, err := domain.NewOutboundMessage(req.TenantID, req.Channel, req.ConversationID, req.ContactID, req.Body, req.Type)
+	if err != nil {
+		return domain.Message{}, fmt.Errorf("new outbound message: %w", err)
 	}
+	msg.Metadata = req.Metadata
 
 	// Persiste mensagem + outbox (atomic).
-	if err := s.outbox.Insert(ctx, &msg); err != nil {
-		// Fallback: tentar persistir a mensagem direto (sem outbox).
-		if err2 := s.repo.Insert(ctx, &msg); err2 != nil {
-			return domain.Message{}, fmt.Errorf("insert message: %w (outbox: %v)", err2, err)
-		}
-	}
-	// Nota: o Insert do outbox já grava a mensagem? Olhar OutboxRepo.Insert.
-	// Na Fase 2, OutboxRepo.Insert não persiste em messages — só no
-	// outbound_events. Aqui persistimos no messages via repo.Insert.
-	if err := s.repo.Insert(ctx, &msg); err != nil {
+	if err := s.repo.Insert(ctx, msg); err != nil {
 		// Pode ser dedup (já existe). Toleramos.
-		s.log.Debug().Err(err).Str("message", string(msgID)).Msg("send: message insert dup or ok")
+		s.log.Debug().Err(err).Str("message", string(msg.ID)).Msg("send: message insert dup or ok")
+	}
+
+	ob, err := domain.NewOutboxMessage(msg.ID, msg.TenantID, msg.Channel, msg.ConversationID, msg.ContactID)
+	if err != nil {
+		return domain.Message{}, fmt.Errorf("new outbox message: %w", err)
+	}
+	if err := s.outbox.Enqueue(ctx, ob); err != nil {
+		// Fallback: tentar Insert legado (wrapper que cria OutboxMessage).
+		if err2 := s.outbox.Insert(ctx, msg); err2 != nil {
+			return domain.Message{}, fmt.Errorf("outbox enqueue: %w (insert fallback: %v)", err, err2)
+		}
 	}
 
 	if s.relay != nil {
 		s.relay.Notify()
 	}
-	return msg, nil
+	return *msg, nil
 }
 
 // SendAction enfileira uma ação de canal (D6).
@@ -167,8 +160,10 @@ func (s *SenderService) SendAction(ctx context.Context, req SendActionRequest) e
 		metadata["state"] = req.State
 	}
 
-	// OutboundEvent-like row no outbox.
-	msg := domain.Message{
+	// OutboundEvent-like row no outbox. Issue #126: usa OutboxMessage.
+	// A Message intermediária existe só para carregar o message_id —
+	// não persistimos ela (ação de canal não cria Message nova).
+	tmpMsg := domain.Message{
 		ID:        msgID,
 		TenantID:  req.TenantID,
 		Channel:   req.Channel,
@@ -177,7 +172,11 @@ func (s *SenderService) SendAction(ctx context.Context, req SendActionRequest) e
 		Body:      string(req.Action),
 		Metadata:  metadata,
 	}
-	if err := s.outbox.Insert(ctx, &msg); err != nil {
+	ob, err := domain.NewOutboxMessage(tmpMsg.ID, tmpMsg.TenantID, tmpMsg.Channel, tmpMsg.ConversationID, tmpMsg.ContactID)
+	if err != nil {
+		return fmt.Errorf("new outbox (action): %w", err)
+	}
+	if err := s.outbox.Enqueue(ctx, ob); err != nil {
 		// Outbox sem tx-rollback: aceitável log+retornar.
 		s.log.Warn().Err(err).Msg("send: outbox action enqueue failed (continuing)")
 	}

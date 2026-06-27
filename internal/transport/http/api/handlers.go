@@ -19,6 +19,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -40,6 +41,7 @@ type Handlers struct {
 	msgRepo    port.MessageRepo
 	tenantRepo port.TenantRepo
 	sender     *ucmessaging.SenderService
+	listSvc    *ucmessaging.ListService
 	senderReg  port.SenderRegistry
 	qrProvider QRCodeProvider
 }
@@ -57,6 +59,7 @@ func New(
 	msgRepo port.MessageRepo,
 	tenantRepo port.TenantRepo,
 	sender *ucmessaging.SenderService,
+	listSvc *ucmessaging.ListService,
 	senderReg port.SenderRegistry,
 	qrProvider QRCodeProvider,
 ) *Handlers {
@@ -66,6 +69,7 @@ func New(
 		msgRepo:    msgRepo,
 		tenantRepo: tenantRepo,
 		sender:     sender,
+		listSvc:    listSvc,
 		senderReg:  senderReg,
 		qrProvider: qrProvider,
 	}
@@ -85,14 +89,16 @@ func (h *Handlers) Register(r chi.Router) {
 	r.Get("/channels/whatsmeow/qrcode", h.whatsmeowQRCode)
 }
 
-// listConversations lista as conversas do tenant.
+// listConversations lista as conversas do tenant. Issue #126:
+// chama o use case ListService em vez de port.ConversationRepo direto
+// (review DDD-Hex §3.2 — Skipping Use Cases).
 func (h *Handlers) listConversations(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := TenantFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "tenant required")
 		return
 	}
-	convs, err := h.convRepo.ListByTenant(r.Context(), tenantID)
+	convs, err := h.listSvc.ListConversations(r.Context(), tenantID)
 	if err != nil {
 		h.log.Error().Err(err).Msg("list conversations")
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -104,14 +110,20 @@ func (h *Handlers) listConversations(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// listMessages lista as mensagens de uma conversa.
+// listMessages lista as mensagens de uma conversa. Issue #126:
+// chama o use case ListService em vez de port.MessageRepo direto.
 func (h *Handlers) listMessages(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := TenantFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "tenant required")
+		return
+	}
 	convID := r.URL.Query().Get("conversation_id")
 	if convID == "" {
 		writeError(w, http.StatusBadRequest, "conversation_id required")
 		return
 	}
-	msgs, err := h.msgRepo.ListByConversation(r.Context(), domain.ConversationID(convID))
+	msgs, err := h.listSvc.ListMessages(r.Context(), tenantID, domain.ConversationID(convID))
 	if err != nil {
 		h.log.Error().Err(err).Msg("list messages")
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -329,8 +341,14 @@ func (h *Handlers) deleteMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 // conversationAssign atribui uma conversa a um agente (ou desmarca).
-// Fase 2: marca assigned_agent; lógica de ACD real é Fase 5.
+// Issue #126: chama ListService.AssignConversation em vez de mexer no
+// repo direto. Aplica FSM guard do AR (issue #125).
 func (h *Handlers) conversationAssign(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := TenantFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "tenant required")
+		return
+	}
 	convID := chi.URLParam(r, "id")
 	if convID == "" {
 		writeError(w, http.StatusBadRequest, "id required")
@@ -343,13 +361,15 @@ func (h *Handlers) conversationAssign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	conv, err := h.convRepo.Get(r.Context(), domain.ConversationID(convID))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "conversation not found")
-		return
-	}
-	conv.AssignedAgent = body.AgentID
-	if err := h.convRepo.Upsert(r.Context(), conv); err != nil {
+	if err := h.listSvc.AssignConversation(r.Context(), tenantID, domain.ConversationID(convID), body.AgentID); err != nil {
+		if errors.Is(err, port.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "conversation not found")
+			return
+		}
+		if errors.Is(err, domain.ErrInvalidTransition) {
+			writeError(w, http.StatusConflict, "conversation is resolved")
+			return
+		}
 		h.log.Error().Err(err).Msg("assign conversation")
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -357,14 +377,24 @@ func (h *Handlers) conversationAssign(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "assigned_agent": body.AgentID})
 }
 
-// conversationResolve marca a conversa como resolvida.
+// conversationResolve marca a conversa como resolvida. Issue #126:
+// chama ListService.ResolveConversation em vez de mexer no repo direto.
 func (h *Handlers) conversationResolve(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := TenantFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "tenant required")
+		return
+	}
 	convID := chi.URLParam(r, "id")
 	if convID == "" {
 		writeError(w, http.StatusBadRequest, "id required")
 		return
 	}
-	if err := h.convRepo.UpdateStatus(r.Context(), domain.ConversationID(convID), domain.ConvStatusResolved); err != nil {
+	if err := h.listSvc.ResolveConversation(r.Context(), tenantID, domain.ConversationID(convID)); err != nil {
+		if errors.Is(err, port.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "conversation not found")
+			return
+		}
 		h.log.Error().Err(err).Msg("resolve conversation")
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

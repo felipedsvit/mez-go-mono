@@ -24,9 +24,21 @@ type ctxKey int
 
 const appTxKey ctxKey = iota
 
-// appQFromCtx returns the active pgx.Tx stored in ctx by RunInTenantTx, or
-// falls back to pool for queries executed outside a tenant transaction.
-func appQFromCtx(ctx context.Context, pool *pgxpool.Pool) querier {
+// appQFromCtxOrPool retorna a pgx.Tx ativa armazenada no ctx por
+// RunInTenantTx, ou cai para o pool quando a query é executada fora de
+// uma transação tenant-scoped.
+//
+// UNSAFE: chamar esta função fora de um ctx produzido por RunInTenantTx
+// é um BUG. Em mez_app (sem BYPASSRLS) a query subsequente falha com
+// "no rows" porque mez.tenant_id não está setado — fail-closed correto,
+// mas opaco. Em mez_platform (BYPASSRLS) a query silenciosamente retorna
+// dados de outros tenants. Por isso o nome contém "OrPool" e este
+// comentário UNSAFE: cada caller é responsável por garantir que está
+// dentro de uma tx ativa.
+//
+// Issue #123 (3.11 do review DDD-Hex): renomeado de appQFromCtxOrPool para
+// deixar a armadilha explícita.
+func appQFromCtxOrPool(ctx context.Context, pool *pgxpool.Pool) querier {
 	if tx, ok := ctx.Value(appTxKey).(pgx.Tx); ok {
 		return tx
 	}
@@ -121,7 +133,7 @@ func (r *TxRunner) RunInTenantTxWithOpts(ctx context.Context, tenantID domain.Te
 // use cases que precisam de múltiplas operações sequenciais sem callback
 // (ex.: export NDJSON com controle de stream). O caller é responsável por
 // Commit/Rollback e por setar mez.tenant_id via SET LOCAL se quiser
-// reutilizar appQFromCtx.
+// reutilizar appQFromCtxOrPool.
 func (r *TxRunner) BeginTenantTx(ctx context.Context, tenantID domain.TenantID, opts ...TxOption) (pgx.Tx, context.Context, error) {
 	cfg := txCfg{isolation: pgx.ReadCommitted}
 	cfg.apply(opts)

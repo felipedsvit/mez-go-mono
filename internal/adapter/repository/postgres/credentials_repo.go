@@ -17,7 +17,7 @@ import (
 //
 // Modelo de uso:
 //
-//   - Get/Upsert/Delete: tenant-scoped, executados via appQFromCtx (tx aberta
+//   - Get/Upsert/Delete: tenant-scoped, executados via appQFromCtxOrPool (tx aberta
 //     por RunInTenantTx). RLS fail-closed (C3/C4): fora de uma tx com
 //     mez.tenant_id setado, a query falha com "no rows" (mez_app não tem
 //     BYPASSRLS).
@@ -46,17 +46,17 @@ func NewChannelCredentialsRepo(appPool, platformPool *pgxpool.Pool, tx *TxRunner
 //
 // Caller DEVE estar dentro de uma tx aberta por RunInTenantTx(tenantID) —
 // caso contrário, RLS esconde todas as linhas (fail-closed).
-func (r *ChannelCredentialsRepo) Get(ctx context.Context, tenantID domain.TenantID, channel domain.Channel) (*domain.ChannelCredentials, error) {
-	q := appQFromCtx(ctx, r.pool)
+func (r *ChannelCredentialsRepo) Get(ctx context.Context, tenantID domain.TenantID, channel domain.Channel) (*port.CredentialRow, error) {
+	q := appQFromCtxOrPool(ctx, r.pool)
 	if _, ok := q.(pgx.Tx); !ok {
-		// Não estamos em uma tx — appQFromCtx caiu para o pool direto, o
+		// Não estamos em uma tx — appQFromCtxOrPool caiu para o pool direto, o
 		// que significa que mez.tenant_id não foi setado. Em mez_app isso
 		// resultaria em zero rows, mas falhamos mais cedo para dar erro
 		// explícito ao caller.
 		return nil, errors.New("channel credentials: Get requer RunInTenantTx (RLS fail-closed)")
 	}
 
-	var cc domain.ChannelCredentials
+	var cc port.CredentialRow
 	var rotUntil *time.Time
 	err := q.QueryRow(ctx,
 		`SELECT tenant_id, channel, wrapped_dek, encrypted, kek_version, rotation_window_until, created_at, updated_at
@@ -78,7 +78,7 @@ func (r *ChannelCredentialsRepo) Get(ctx context.Context, tenantID domain.Tenant
 //
 // Caller DEVE estar dentro de uma tx aberta por RunInTenantTx(tenantID).
 func (r *ChannelCredentialsRepo) Upsert(ctx context.Context, tenantID domain.TenantID, channel domain.Channel, wrappedDEK, encrypted []byte, kekVersion int) error {
-	q := appQFromCtx(ctx, r.pool)
+	q := appQFromCtxOrPool(ctx, r.pool)
 	if _, ok := q.(pgx.Tx); !ok {
 		return errors.New("channel credentials: Upsert requer RunInTenantTx (RLS fail-closed)")
 	}
@@ -102,7 +102,7 @@ func (r *ChannelCredentialsRepo) Upsert(ctx context.Context, tenantID domain.Ten
 // Delete remove a credencial (tenantID, channel). Idempotente: retorna nil
 // mesmo se a linha não existia.
 func (r *ChannelCredentialsRepo) Delete(ctx context.Context, tenantID domain.TenantID, channel domain.Channel) error {
-	q := appQFromCtx(ctx, r.pool)
+	q := appQFromCtxOrPool(ctx, r.pool)
 	if _, ok := q.(pgx.Tx); !ok {
 		return errors.New("channel credentials: Delete requer RunInTenantTx (RLS fail-closed)")
 	}

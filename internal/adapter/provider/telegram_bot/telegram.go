@@ -37,7 +37,7 @@ func New(tenant domain.TenantID, bot BotClient, log zerolog.Logger) *Adapter {
 func (a *Adapter) Channel() domain.Channel { return domain.ChannelTGBot }
 
 // Capabilities retorna o set completo do Bot API.
-func (a *Adapter) Capabilities() port.CapabilitySet { return port.CapabilitiesTelegram() }
+func (a *Adapter) Capabilities() port.CapabilitySet { return TelegramCapabilities() }
 
 // Send entrega mensagem ou ação.
 func (a *Adapter) Send(ctx context.Context, req port.OutboundRequest) (string, error) {
