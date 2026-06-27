@@ -33,6 +33,12 @@ const (
 	// runs; if the operation fails, the wrapper rolls back, including the
 	// audit row (atomic). Without the wrapper, the audit row is missing.
 	ActionPlatformAccess Action = "platform:access"
+	// ActionRotateKEKStarted é emitido pela CLI rotate-kek ANTES de iterar
+	// (issue #92 / Fase 7). Permite distinguir "rotação iniciada" de
+	// "rotação completada" no audit.
+	ActionRotateKEKStarted   Action = "secrets.rotate_kek.started"
+	ActionRotateKEKTenant    Action = "secrets.rotate_kek.tenant"
+	ActionRotateKEKComplete  Action = "secrets.rotate_kek.complete"
 )
 
 func (a Action) Valid() bool {
@@ -43,7 +49,8 @@ func (a Action) Valid() bool {
 		ActionTenantBackup, ActionTenantRestore, ActionTenantReset,
 		ActionUserCreate, ActionUserStatus, ActionUserRoleAssign, ActionUserRoleRevoke,
 		ActionRoleCreate, ActionRolePermissions,
-		ActionPlatformAccess:
+		ActionPlatformAccess,
+		ActionRotateKEKStarted, ActionRotateKEKTenant, ActionRotateKEKComplete:
 		return true
 	default:
 		return false

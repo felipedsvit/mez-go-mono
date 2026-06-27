@@ -97,7 +97,7 @@ func (db *DB) RunAsPlatform(
 	}
 	const auditSQL = `INSERT INTO admin_audit_log
 		(id, actor_id, actor_email, action, target_type, target_id, tenant_id, metadata, ip, user_agent, created_at)
-		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), $8, NULLIF($9, ''), '', $10)`
+		VALUES ($1, NULLIF($2, '')::uuid, NULLIF($3, ''), $4, NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), $8, NULLIF($9, ''), '', $10)`
 	if _, err := tx.Exec(ctx, auditSQL,
 		entry.ID, string(entry.ActorID), entry.ActorEmail, string(entry.Action),
 		entry.TargetType, entry.TargetID, entry.TenantID, entry.Metadata, entry.IP, entry.CreatedAt,

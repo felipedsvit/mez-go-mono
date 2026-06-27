@@ -202,6 +202,74 @@ go test -tags integration -race -run TestRunAsPlatform ./tests/platform/...
 
 ---
 
+## Fase 7 — Hardening
+
+A partir da Fase 7, credenciais de canal (Meta tokens, Telegram bot
+tokens) **não vivem mais em env vars**. São cifradas por tenant
+(DEK/tenant wrapped por KEK) na tabela `channel_credentials`. A
+classe `Keyring` (em `internal/usecase/secrets/keyring.go`) é o
+orquestrador de Encrypt/Decrypt; o `LocalSealer` (em
+`internal/adapter/crypto/local_sealer.go`) é o adapter que satisfaz
+`port.Sealer` + `port.Encryptor`.
+
+**Como setar credenciais (em runtime):**
+
+```bash
+# Após migrate, o seed de credenciais é via API admin (Fase 5b) ou
+# via SQL ad-hoc (apenas dev):
+psql $MEZ_DATABASE_URL -c "
+INSERT INTO channel_credentials (tenant_id, channel, wrapped_dek, encrypted, kek_version)
+VALUES ('<tenant-uuid>', 'waba', '<base64-wrapped-dek>', '<base64-encrypted>', 1);"
+```
+
+**Como rodar `rotate-kek`:**
+
+```bash
+# 1. Gerar nova KEK
+NEW_KEK=$(openssl rand -base64 32)
+
+# 2. Dry-run (sem persistir)
+MEZ_MASTER_KEY=$OLD_KEK \
+MEZ_MASTER_KEY_NEW=$NEW_KEK \
+make rotate-kek ARGS="--dry-run"
+
+# 3. Real (atômico via RunAsPlatform)
+MEZ_MASTER_KEY=$OLD_KEK \
+MEZ_MASTER_KEY_NEW=$NEW_KEK \
+make rotate-kek
+
+# 4. Após sucesso, atualize o env var:
+export MEZ_MASTER_KEY=$NEW_KEK
+unset MEZ_MASTER_KEY_NEW
+```
+
+**Auditoria:** toda rotação grava:
+
+- 1 linha `secrets.rotate_kek.started` antes de iterar
+- N linhas `secrets.rotate_kek.tenant` (1 por (tenant, channel))
+- 1 linha `secrets.rotate_kek.complete` no fim
+
+Mais 1 linha `platform:access` por `UpdateWrappedDEK` (C5 atômico
+via `RunAsPlatform`). Auditar com:
+
+```sql
+SELECT created_at, actor_email, action, target_id, tenant_id, metadata
+FROM admin_audit_log
+WHERE action LIKE 'secrets.rotate_kek%' OR action = 'platform:access'
+ORDER BY created_at DESC LIMIT 50;
+```
+
+**Caveats:**
+
+- Perda da KEK = perda de TODAS as credenciais. Backup offline
+  (paper, HSM) é responsabilidade do operador. Ver ADR 0020.
+- Cache de DEK em memória (TTL 5min) — `zero(dek)` após uso.
+  Single-process assume IP de saída compartilhado (C10).
+- `cmd/server rotate-kek` é **offline** (não roda junto com `serve`).
+  Pode ser executado em janela de manutenção.
+
+---
+
 ## Config
 
 ```bash

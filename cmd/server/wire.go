@@ -38,13 +38,14 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/auth/argon2"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/broker"
 	memcache "github.com/felipedsvit/mez-go-mono/internal/adapter/cache/memory"
+	adaptercrypto "github.com/felipedsvit/mez-go-mono/internal/adapter/crypto"
 	providerregistry "github.com/felipedsvit/mez-go-mono/internal/adapter/provider/registry"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/whatsmeow"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres"
 	adminrepo "github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres/admin"
 	s3store "github.com/felipedsvit/mez-go-mono/internal/adapter/storage/s3"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/meta"
-	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/secrets"
+	webhooksecrets "github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/secrets"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/telegram"
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 	"github.com/felipedsvit/mez-go-mono/internal/core/event"
@@ -60,6 +61,7 @@ import (
 	ucoutbox "github.com/felipedsvit/mez-go-mono/internal/usecase/outbox"
 	ucreconcile "github.com/felipedsvit/mez-go-mono/internal/usecase/reconcile"
 	ucrouting "github.com/felipedsvit/mez-go-mono/internal/usecase/routing"
+	ucsecrets "github.com/felipedsvit/mez-go-mono/internal/usecase/secrets"
 	"github.com/felipedsvit/mez-go-mono/pkg/config"
 	"github.com/felipedsvit/mez-go-mono/pkg/health"
 	"github.com/felipedsvit/mez-go-mono/pkg/metrics"
@@ -85,7 +87,10 @@ type AppContext struct {
 	SenderRegistry port.SenderRegistry
 	SenderService  *ucmessaging.SenderService
 	StatusConsumer *ucmessaging.StatusConsumer
-	Credentials    *secrets.EnvCredentials
+
+	// Fase 7: envelope encryption
+	Keyring  *ucsecrets.Keyring
+	CredsRepo *postgres.ChannelCredentialsRepo
 
 	// Usecases
 	Ingestor   *ucmessaging.Ingestor
@@ -158,11 +163,15 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		_ = routerSvc
 	})
 
-	// 8. Sender pipeline
-	creds, err := secrets.NewEnvCredentials()
+	// 8. Sealer + ChannelCredentialsRepo + Keyring (Fase 7 #88/#90/#91)
+	localSealer, err := adaptercrypto.NewLocalSealer(cfg.MasterKey)
 	if err != nil {
-		return nil, fmt.Errorf("load credentials: %w", err)
+		return nil, fmt.Errorf("local sealer: %w", err)
 	}
+	credsRepo := postgres.NewChannelCredentialsRepo(appPool, platformPool, txRunner)
+	keyring := ucsecrets.New(credsRepo, localSealer, log)
+
+	// Capability resolver
 	resolver := port.NewResolver()
 	resolver.Register(domain.ChannelWABA, port.CapabilitiesWABA())
 	resolver.Register(domain.ChannelIG, port.CapabilitiesInstagram())
@@ -174,7 +183,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	waStateR := postgres.NewWhatsAppStateRepo(appPool, platformPool)
 	waManager := whatsmeow.NewManager(whatsmeow.DefaultConfig(), waStateR, log)
 
-	senderRegistry := providerregistry.Build(creds, log, providerregistry.BuildOpts{
+	senderRegistry := providerregistry.Build(keyring, log, providerregistry.BuildOpts{
 		Whatsmeow: &providerregistry.WhatsmeowDeps{Manager: waManager},
 	})
 
@@ -251,11 +260,11 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	)
 
 	// 12. Webhook handlers.
-	metaSecrets, err := secrets.NewEnvMetaSecrets()
+	metaSecrets, err := webhooksecrets.NewEnvMetaSecrets()
 	if err != nil {
 		return nil, fmt.Errorf("load meta secrets: %w", err)
 	}
-	tgSecrets := secrets.NewEnvTelegramSecrets()
+	tgSecrets := webhooksecrets.NewEnvTelegramSecrets()
 	metaH := meta.New(ingestor, metaSecrets, metaSecrets, meta.Config{}, log)
 	tgH := telegram.New(ingestor, tgSecrets, telegram.Config{}, log)
 
@@ -338,7 +347,8 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		Outbox: outboxRepo, InboundEvs: inboundEvsRepo,
 		ConvRepo: convRepo, MsgRepo: msgRepo, TenantRepo: tenantRepo,
 		SenderRegistry: senderRegistry, SenderService: senderSvc,
-		StatusConsumer: statusConsumer, Credentials: creds,
+		StatusConsumer: statusConsumer,
+		Keyring: keyring, CredsRepo: credsRepo,
 		Ingestor: ingestor, Router: routerSvc, Relay: relay, Reconciler: reconciler,
 		BackupService: backupSvc, Store: store, AdminVerifier: loginSvc,
 		AdminServer: adminSrv,

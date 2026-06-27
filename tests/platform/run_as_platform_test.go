@@ -121,6 +121,18 @@ func TestRunAsPlatform_AuditAtomicity(t *testing.T) {
 
 	repos := adminrepo.NewRepositories(db)
 
+	// Seed: cria o admin user usado como actor nos tests. Necessário
+	// porque admin_audit_log.actor_id tem FK para admin_users(id).
+	actorSeedID := "11111111-1111-1111-1111-111111111111"
+	_, err = platformPool.Exec(ctx,
+		`INSERT INTO admin_users (id, email, auth_kind, password_hash)
+		 VALUES ($1, 'canary-actor@x.com', 'local', 'placeholder')
+		 ON CONFLICT (id) DO NOTHING`,
+		actorSeedID)
+	if err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+
 	t.Run("Success_BothRowsCommitted", func(t *testing.T) {
 		actor := admin.Actor{
 			ID:    "11111111-1111-1111-1111-111111111111",

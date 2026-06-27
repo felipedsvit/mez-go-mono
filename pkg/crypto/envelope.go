@@ -36,6 +36,14 @@ func (e *Envelope) GenerateDEK() ([]byte, []byte, error) {
 	return dek, wrapped, nil
 }
 
+// Wrap cifra a DEK em claro sob a KEK. Retorna nonce||ciphertext (formato
+// consumível por Unwrap). É o equivalente público de wrapDEK, exposto para
+// que adapters (ex.: LocalSealer) possam delegar sem expor o envelope
+// internals.
+func (e *Envelope) Wrap(dek []byte) ([]byte, error) {
+	return e.wrapDEK(dek)
+}
+
 func (e *Envelope) wrapDEK(dek []byte) ([]byte, error) {
 	block, err := aes.NewCipher(e.kek)
 	if err != nil {
@@ -50,6 +58,12 @@ func (e *Envelope) wrapDEK(dek []byte) ([]byte, error) {
 		return nil, fmt.Errorf("nonce: %w", err)
 	}
 	return aesgcm.Seal(nonce, nonce, dek, nil), nil
+}
+
+// Unwrap decifra uma DEK wrapped e devolve plaintext (32 bytes). Retorna
+// erro de GCM auth tag se a KEK estiver errada ou o ciphertext adulterado.
+func (e *Envelope) Unwrap(wrapped []byte) ([]byte, error) {
+	return e.unwrapDEK(wrapped)
 }
 
 func (e *Envelope) unwrapDEK(wrapped []byte) ([]byte, error) {

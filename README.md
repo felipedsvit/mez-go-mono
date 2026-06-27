@@ -466,6 +466,16 @@ func (e *Envelope) EncryptForTenant(wrappedDEK, plaintext []byte) ([]byte, error
 - **Rotação de KEK**: re-wrap de todos os DEKs. Operação `cmd/server rotate-kek` com a KEK
   antiga e a nova; roda offline (janela de manutenção).
 
+### Crash recovery durante `rotate-kek`
+
+Se o processo for interrompido no meio da rotação, os campos `kek_version` e
+`rotation_window_until` em `channel_credentials` permitem identificar quais DEKs já foram
+re-wrapped. O operador re-roda o mesmo comando: linhas já migradas (`kek_version == novo`)
+são puladas, tornando a operação idempotente. Durante `rotation_window_until`, o `Keyring`
+aceita DEKs das duas versões — antiga e nova — evitando falhas de decifração em tenants
+parcialmente migrados. O in-memory `dekCache` é invalidado por tenant à medida que o
+re-wrap progride, garantindo que novos `Encrypt` usem o `wrappedDEK` atualizado.
+
 ### Vault Transit como backend opcional (pós-1.0)
 
 A interface `Sealer` abstrai o backend:
@@ -754,6 +764,14 @@ docker compose logs -f app
 
 # 5. Bootstrap do admin global
 open http://localhost:8080/setup
+
+# 6. Configurar credenciais de canal de um tenant (Fase 7+: env vars de credencial removidas)
+#    Após criar o tenant em /admin/tenants, configure canais via API:
+curl -X POST http://localhost:8080/admin/tenants/<tenant-id>/channels \
+     -H "Cookie: session=<session-cookie>" \
+     -H "Content-Type: application/json" \
+     -d '{"channel":"telegram_bot","token":"<bot_token>"}'
+#    Para desenvolvimento local com seed automático, ver AGENTS.md §Seed de credenciais.
 ```
 
 ### Smoke test
@@ -779,6 +797,8 @@ curl -s http://localhost:8080/readyz   # → 200 quando DB + S3 prontos
 | `MEZ_PLATFORM_DATABASE_URL` | ✅ | — | DSN do Postgres (role `mez_platform`, bypass auditado) |
 | `MEZ_MASTER_KEY` | ✅* | — | KEK base64 (32 bytes) para envelope encryption |
 | `MEZ_MASTER_KEY_FILE` | ✅* | — | alternativa: caminho de arquivo com a KEK |
+| `MEZ_MASTER_KEY_NEW` | — | — | Nova KEK base64 (32 bytes); usado exclusivamente com `cmd/server rotate-kek` |
+| `MEZ_MASTER_KEY_FILE_NEW` | — | — | alternativa: caminho de arquivo com a nova KEK; usado exclusivamente com `rotate-kek` |
 | `MEZ_S3_ENDPOINT` | ✅ | — | endpoint S3/MinIO |
 | `MEZ_S3_BUCKET` | ✅ | `mezgo-media` | bucket de mídia |
 | `MEZ_S3_BACKUP_BUCKET` | ✅ | `mezgo-backups` | bucket de backups |
@@ -805,14 +825,18 @@ curl -s http://localhost:8080/readyz   # → 200 quando DB + S3 prontos
 ### Makefile (alvos principais)
 
 ```bash
-make tools         # instala templ, oapi-codegen, golang-migrate
-make generate      # templ generate + oapi-codegen
-make build         # compila o binário único
-make test          # go test -race -shuffle=on ./...
-make openapi-gen   # regenera api/openapi.gen.go
-make migrate-up    # aplica migrations (local)
-make docker        # build da imagem
-make lint          # golangci-lint
+make tools              # instala templ, oapi-codegen, golang-migrate
+make generate           # templ generate + oapi-codegen
+make build              # compila o binário único
+make test               # go test -race -shuffle=on ./...
+make test-integration   # go test -tags integration -race (testcontainers: Postgres + MinIO reais)
+make openapi-gen        # regenera api/openapi.gen.go
+make openapi-validate   # regenera e valida diff — exit 1 se spec desincronizado (CI)
+make govulncheck        # golang.org/x/vuln/cmd/govulncheck ./...
+make migrate-up         # aplica migrations (local)
+make rotate-kek         # re-wrap DEKs (usa MEZ_MASTER_KEY + MEZ_MASTER_KEY_NEW)
+make docker             # build da imagem
+make lint               # golangci-lint
 ```
 
 ### Critérios de build verde
@@ -820,7 +844,10 @@ make lint          # golangci-lint
 - `make build` compila sem erro.
 - `make test` passa com `-race` e `-shuffle=on` (detecta data races no bus e no whatsmeow
   dispatcher — críticos neste modelo).
+- `make test-integration` passa (testcontainers: Postgres + MinIO reais).
 - `make generate` não deixa diff (templ e openapi sincronizados).
+- `make govulncheck` zero vulnerabilidades.
+- `make openapi-validate` exit 0 quando spec sincronizado.
 
 ### Testes
 
@@ -1027,11 +1054,17 @@ riscos já mapeados.
 - **Restore idempotente com ordem topológica + FKs deferidas (C6) + replay de migrations (C7).**
 - Reset (confirmação dupla); painel com progresso; audit log.
 
-### Fase 7 — Hardening (2-3 dias)
+### Fase 7 — Hardening (2-3 dias) ✅
 
 - Envelope encryption (DEK/tenant) + `rotate-kek` (C9).
 - CI: build-and-test, openapi-validate, govulncheck.
 - Documentação final.
+
+Issues entregues: #88 LocalSealer · #89 migration `kek_version` ·
+#90 ChannelCredentialsRepo · #91 Keyring + dekCache · #92 RotateKEK
+usecase + CLI · #93 Makefile (`govulncheck`, `openapi-validate`,
+`rotate-kek`) · #94 20 ADRs em `docs/adr/` (D1–D18) · #95 E2E
+testcontainers em `tests/secrets/`.
 
 ### Fase 8 — Estabilização do processo único (3-4 dias) *(NOVO — C12)*
 

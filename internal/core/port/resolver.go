@@ -1,11 +1,29 @@
 package port
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 )
+
+// CredentialsResolver resolve credenciais de canal como bytes JSON para um
+// par (tenantID, channel). O Keyring (usecase/secrets) é a implementação de
+// produção; adapters baseados em env var podem satisfazer a interface em
+// dev/test.
+//
+// O conteúdo dos bytes é um JSON com os campos relevantes para o canal:
+//
+//	WABA:     {"phone_number_id":"...","access_token":"..."}
+//	IG/MSG:   {"page_id":"...","access_token":"..."}
+//	Telegram: {"bot_token":"..."}
+//
+// Factories do SenderRegistry fazem Unmarshal do retorno para a struct
+// canal-específica.
+type CredentialsResolver interface {
+	ResolveCredentials(ctx context.Context, tenantID domain.TenantID, channel domain.Channel) ([]byte, error)
+}
 
 // ErrCapabilityUnsupported is returned when a channel does not advertise a
 // particular capability.

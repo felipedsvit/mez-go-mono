@@ -39,7 +39,7 @@ type pgxTx interface {
 
 func (r *AuditRepo) insert(ctx context.Context, q pgxTx, entry *admin.AuditEntry) error {
 	query := `INSERT INTO admin_audit_log (id, actor_id, actor_email, action, target_type, target_id, tenant_id, metadata, ip, user_agent, created_at)
-		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), $4, NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), $8, NULLIF($9, ''), NULLIF($10, ''), $11)`
+		VALUES ($1, NULLIF($2, '')::uuid, NULLIF($3, ''), $4, NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), $8, NULLIF($9, ''), NULLIF($10, ''), $11)`
 
 	if entry.ID == "" {
 		entry.ID = uuid.NewString()

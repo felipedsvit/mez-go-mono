@@ -1,4 +1,4 @@
-.PHONY: tools build test lint generate openapi-gen migrate-up migrate-down docker docker-compose-up tidy
+.PHONY: tools build test lint generate openapi-gen openapi-validate migrate-up migrate-down docker docker-compose-up tidy govulncheck rotate-kek
 
 GO ?= go
 BIN := mez-go-mono
@@ -12,6 +12,7 @@ tools:
 	$(GO) install github.com/a-h/templ/cmd/templ@latest
 	$(GO) install github.com/deepmap/oapi-codegen/v2/cmd/oapi-codegen@latest
 	$(GO) install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+	$(GO) install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
 # ==============================================================================
 # Build
@@ -51,6 +52,14 @@ fmt:
 vet:
 	$(GO) vet ./...
 
+# govulncheck roda análise de vulnerabilidades conhecidas sobre o módulo.
+# Fase 7 #93: alvo do CI. `make tools` instala govulncheck v1.1.4.
+# Exit code 0 = sem vulns; 3 = vulns encontradas; 1 = erro de execução.
+# Em dev pode-se ignorar com `make govulncheck || true`.
+govulncheck:
+	@which govulncheck > /dev/null 2>&1 || $(GO) install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+	govulncheck ./...
+
 # ==============================================================================
 # Code generation
 # ==============================================================================
@@ -62,6 +71,12 @@ templ-gen:
 
 openapi-gen:
 	@which oapi-codegen > /dev/null 2>&1 && oapi-codegen -generate types,server -package api api/openapi.yaml > api/openapi.gen.go || echo "oapi-codegen not installed; skipping"
+
+# openapi-validate roda `openapi-gen` e falha se o arquivo gerado mudou.
+# Fase 7 #93: garante que o commit inclui o .gen.go sincronizado com o spec.
+# Exit 0 = spec já estava em sync; 1 = drift detectado (re-commit .gen.go).
+openapi-validate: openapi-gen
+	@git diff --exit-code api/openapi.gen.go > /dev/null || (echo "openapi.gen.go drift detectado — rode 'make openapi-gen' e commit" && exit 1)
 
 # ==============================================================================
 # Database migrations
@@ -104,6 +119,12 @@ run:
 
 run-migrate:
 	$(GO) run ./cmd/server migrate up
+
+# rotate-kek invoca o subcomando CLI (Fase 7 #92). Requer MEZ_MASTER_KEY
+# e MEZ_MASTER_KEY_NEW (ou _FILE) no env. Para dry-run, use:
+#   make rotate-kek ARGS="--dry-run"
+rotate-kek:
+	$(GO) run ./cmd/server rotate-kek --actor "operator:$${USER:-unknown}" $(ARGS)
 
 clean:
 	rm -rf bin/
