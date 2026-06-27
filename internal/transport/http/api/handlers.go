@@ -32,7 +32,17 @@ import (
 
 type ctxKey string
 
-const tenantCtxKey ctxKey = "tenant_id"
+const (
+	tenantCtxKey ctxKey = "tenant_id"
+	actorCtxKey  ctxKey = "actor"
+)
+
+// Actor representa o principal autenticado para audit/authorize.
+// Issue #134 (C6 audit): preenchido a partir do JWT no BearerAuth.
+type Actor struct {
+	ID    string
+	Email string
+}
 
 // Handlers agrupa todos os handlers da API.
 type Handlers struct {
@@ -98,6 +108,10 @@ func (h *Handlers) listConversations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "tenant required")
 		return
 	}
+	if h.listSvc == nil {
+		writeError(w, http.StatusServiceUnavailable, "list service not initialized")
+		return
+	}
 	convs, err := h.listSvc.ListConversations(r.Context(), tenantID)
 	if err != nil {
 		h.log.Error().Err(err).Msg("list conversations")
@@ -121,6 +135,10 @@ func (h *Handlers) listMessages(w http.ResponseWriter, r *http.Request) {
 	convID := r.URL.Query().Get("conversation_id")
 	if convID == "" {
 		writeError(w, http.StatusBadRequest, "conversation_id required")
+		return
+	}
+	if h.listSvc == nil {
+		writeError(w, http.StatusServiceUnavailable, "list service not initialized")
 		return
 	}
 	msgs, err := h.listSvc.ListMessages(r.Context(), tenantID, domain.ConversationID(convID))
@@ -361,6 +379,10 @@ func (h *Handlers) conversationAssign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	if h.listSvc == nil {
+		writeError(w, http.StatusServiceUnavailable, "list service not initialized")
+		return
+	}
 	if err := h.listSvc.AssignConversation(r.Context(), tenantID, domain.ConversationID(convID), body.AgentID); err != nil {
 		if errors.Is(err, port.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "conversation not found")
@@ -388,6 +410,10 @@ func (h *Handlers) conversationResolve(w http.ResponseWriter, r *http.Request) {
 	convID := chi.URLParam(r, "id")
 	if convID == "" {
 		writeError(w, http.StatusBadRequest, "id required")
+		return
+	}
+	if h.listSvc == nil {
+		writeError(w, http.StatusServiceUnavailable, "list service not initialized")
 		return
 	}
 	if err := h.listSvc.ResolveConversation(r.Context(), tenantID, domain.ConversationID(convID)); err != nil {
@@ -514,4 +540,22 @@ func TenantFromContext(ctx context.Context) (domain.TenantID, bool) {
 // e para o middleware BearerAuth.
 func ContextWithTenant(ctx context.Context, t domain.TenantID) context.Context {
 	return context.WithValue(ctx, tenantCtxKey, t)
+}
+
+// ActorFromContext extrai o actor (sub/email do JWT) do contexto.
+// Retorna (Actor{}, false) se não houver actor injetado (request
+// sem auth ou test sem o header). Issue #134 (C6 audit).
+func ActorFromContext(ctx context.Context) (Actor, bool) {
+	v := ctx.Value(actorCtxKey)
+	if v == nil {
+		return Actor{}, false
+	}
+	a, ok := v.(Actor)
+	return a, ok
+}
+
+// ContextWithActor injeta o actor no contexto. Helper para tests e
+// para o middleware BearerAuth. Issue #134.
+func ContextWithActor(ctx context.Context, a Actor) context.Context {
+	return context.WithValue(ctx, actorCtxKey, a)
 }

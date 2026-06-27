@@ -1,7 +1,7 @@
 # DDD / Hexagonal — Plano de Execução da Revisão 001
 
 > Origem: `docs/fase8/FIXES/001_DDD_HEXAGONAL_REVIEW.md` (junho/2026).
-> Escopo aprovado: 12 dos 13 itens. **Exceto 3.3 (Domain Events)** — fica para sprint à parte conforme a própria recomendação do review (longo prazo).
+> Escopo aprovado: 12 dos 13 itens. **Exceto 3.3 (Domain Events)** — **`wontfix-1.0`** conforme decisão documentada em `004_DOMAIN_EVENTS_DECISION.md` (issue #128).
 
 ## Status Final
 
@@ -18,6 +18,7 @@
 | 3.1+3.7 | #125 | ✅ | `Conversation` como AR; `NewConversation`, `Assign`, `Resolve`, `NewInboundMessage`, `MarkRouted`, `MarkNotified`, `MarkClaimed`, `MarkSent`, `MarkFailed`, `MarkDLQ` |
 | 3.2 | #126 | ✅ | `usecase/messaging.ListService` com `ListConversations`, `ListMessages`, `AssignConversation`, `ResolveConversation` |
 | 3.8 | #126 | ✅ | `domain.OutboxMessage` (FSM) + `port.OutboxWriter.Enqueue`; tabela mantém paralela (decisão consciente) |
+| **3.3** | **#128** | **wontfix-1.0** | **Domain events: análise em `004_DOMAIN_EVENTS_DECISION.md`. Reabrir quando bus confiável + multi-worker (Fase 5+).** |
 
 ## Tabela de Execução
 
@@ -65,7 +66,7 @@
 
 ## Não-Objetivos (explícitos)
 
-- **3.3 Domain Events completo:** diferido. O esqueleto de retorno `[]DomainEvent` fica pronto; a publicação no bus é sprint separada.
+- **3.3 Domain Events completo:** **`wontfix-1.0`**. Análise completa em `004_DOMAIN_EVENTS_DECISION.md` (issue #128). Pré-condições para reabrir: bus confiável + roadmap multi-worker (Fase 5+).
 - **CQRS / Event Sourcing:** proibidos por recomendação do review.
 - **Movimento de `ChannelCredentials` para `usecase/secrets/`:** optei por `port` (já tem `CredentialRow`), evitando novo package.
 - **Refactor de `ConversationRepo.UpdateStatus` para usar `Conversation.Resolve`:** feito junto com 3.2 (handler resolve → use case → AR method).

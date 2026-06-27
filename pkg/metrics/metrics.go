@@ -15,14 +15,14 @@ type Registry struct {
 	OutboxPending     prometheus.Gauge
 	ReconcilerLag     prometheus.Gauge
 
-	// Lifecycle metrics (Fase 8). nil-allowed: sink.go trata como no-op
-	// quando não inicializados, o que permite testes que constroem um
-	// Registry mínimo sem essas métricas.
-	BootPhaseInfo          *prometheus.GaugeVec
-	BootPhaseDuration      *prometheus.HistogramVec
-	ShutdownPhaseDuration  *prometheus.HistogramVec
-	BootTotalDuration      prometheus.Histogram
-	ShutdownTotalDuration  prometheus.Histogram
+	// Lifecycle metrics (Fase 8 #101). nil-allowed: sink.go trata como
+	// no-op quando não inicializados, o que permite testes que constroem
+	// um Registry mínimo sem essas métricas.
+	BootPhaseInfo         *prometheus.GaugeVec
+	BootPhaseDuration     *prometheus.HistogramVec
+	ShutdownPhaseDuration *prometheus.HistogramVec
+	BootTotalDuration     prometheus.Histogram
+	ShutdownTotalDuration prometheus.Histogram
 }
 
 func NewRegistry() *Registry {

@@ -194,12 +194,16 @@ func (s *Subscriber) Close() {
 	_ = s.conn.Close()
 }
 
-// Upgrader padrão (verifica origin e upgrade HTTP → WS).
-var Upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		// Fase 5: aceita qualquer origin (dev). Production: validar.
-		return true
-	},
+// DefaultUpgrader devolve um Upgrader permissivo para dev/test apenas.
+// **Não usar em produção.** Production deve injetar via NewHandler
+// um Upgrader criado por NewUpgrader(UpgraderConfig{...}) com allowlist.
+//
+// Mantido temporariamente para retro-compat com testes que ainda
+// referenciam o símbolo. Será removido após migration completa (issue #129).
+func DefaultUpgrader() *websocket.Upgrader {
+	return &websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin:     func(*http.Request) bool { return true },
+	}
 }

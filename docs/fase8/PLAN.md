@@ -1,9 +1,23 @@
 # Fase 8 — Estabilização do processo único (C12)
 
-> **Status:** planejamento aprovado (junho/2026).
-> **Escopo:** 7 issues (#96–#102) · ~4.0d solo estimado · single commit (squash) em `fase8-squash` → `main`.
-> **Pré-requisitos:** Fases 0, 1, 2, 3, 4, 5, 6 e 7 merged.
+> **Status:** planejamento aprovado (junho/2026) · em aberto · tracking em `fase8-tracking`.
+> **Escopo:** 7 issues planejadas + 2 carryovers (D3, D4) = 9 issues (#99–#107) · ~4.0d solo estimado · single commit (squash) em `fase8-squash` → `main`.
+> **Pré-requisitos:** Fases 0, 1, 2, 3, 4, 5, 6 e 7 merged (Fase 7 commit `6448f15` em `main`).
 > **Base normativa:** `README.md` §23 (Fase 8), §6 (garantias de entrega), §20 (operação em produção), §21 (riscos C10) e §24 (Definition of Done).
+
+### Mapeamento issue → escopo
+
+| Issue | Título | Tipo |
+|------:|--------|------|
+| [#99](https://github.com/felipedsvit/mez-go-mono/issues/99) | D3 — tests/inbound/TestOutbox_InsertAndClaim (UUID vazio) | carryover (Fase 6) |
+| [#100](https://github.com/felipedsvit/mez-go-mono/issues/100) | D4 — whatsmeow/TestDispatcher_BoundedDrop (flake) | carryover (Fase 4) |
+| [#101](https://github.com/felipedsvit/mez-go-mono/issues/101) | #96 — pkg/lifecycle.Runner | NEW |
+| [#102](https://github.com/felipedsvit/mez-go-mono/issues/102) | #97 — Refatorar cmd/server/wire.go em fases | REWRITE |
+| [#103](https://github.com/felipedsvit/mez-go-mono/issues/103) | #98 — Hub.Shutdown(ctx) | REWRITE |
+| [#104](https://github.com/felipedsvit/mez-go-mono/issues/104) | #101 — MigrateOnBoot | MECHANICAL |
+| [#105](https://github.com/felipedsvit/mez-go-mono/issues/105) | #102 — goleak.VerifyTestMain em 7 pacotes | MECHANICAL |
+| [#106](https://github.com/felipedsvit/mez-go-mono/issues/106) | #103 — Testes de chaos | NEW |
+| [#107](https://github.com/felipedsvit/mez-go-mono/issues/107) | #107 — Cold-boot com N tenants | NEW |
 
 ---
 

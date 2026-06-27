@@ -344,11 +344,20 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		AdminVerifier:   loginSvc, // Reset usa LoginLocal para confirmar senha
 	})
 	srv := &http.Server{
-		Addr:         cfg.HTTPAddr,
-		Handler:      handler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:    cfg.HTTPAddr,
+		Handler: handler,
+		// Issue #152 (H14 audit, DREAD 6.0): slow-loris defense.
+		// ReadHeaderTimeout limita o tempo que o cliente tem para enviar
+		// os headers — sem isso, 1 byte a cada 14s mantém a conexão
+		// viva indefinidamente (ReadTimeout só conta após o request body).
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		// Limite de header em 1 MiB. Headers legítimos (Authorization,
+		// Cookies) cabem em < 4 KiB; 1 MiB protege contra heap blow-up
+		// por headers gigantes.
+		MaxHeaderBytes: 1 << 20,
 	}
 
 	return &AppContext{

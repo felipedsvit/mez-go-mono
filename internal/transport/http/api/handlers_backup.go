@@ -11,6 +11,11 @@
 // Auth: Bearer JWT com claim "scope" contendo "admin:backup" (placeholder
 // até Fase 5 RBAC). Bearer, não cookie → CSRF não se aplica (RFC 7231).
 // Audit: cada ação registra uma entry em admin_audit_log (D17).
+//
+// Issue #134 (C6 audit, DREAD 8.6): o actor (ID/email) usado no audit
+// vem **exclusivamente** do JWT (sub/email claims), injetado pelo
+// BearerAuth middleware. O header X-Admin-Email que permitia atribuir
+// o ato a email arbitrário foi removido.
 
 package api
 
@@ -22,7 +27,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	cdomain "github.com/felipedsvit/mez-go-mono/internal/core/admin"
-	ucadmin "github.com/felipedsvit/mez-go-mono/internal/usecase/admin"
 	ucbackup "github.com/felipedsvit/mez-go-mono/internal/usecase/backup"
 )
 
@@ -47,17 +51,23 @@ func (h *BackupHandlers) Register(r chi.Router) {
 	r.Get("/admin/backup-jobs/{id}", h.jobStatus)
 }
 
-// actorFromContext extrai o actor do request (para audit). Em produção,
-// o principal vem do JWT (claim sub/email); aqui usamos placeholders.
-func actorFromRequest(r *http.Request) ucadmin.Actor {
-	email := r.Header.Get("X-Admin-Email")
-	if email == "" {
-		email = "unknown@admin"
+// actorFromContext extrai o actor do request (para audit). Issue #134:
+// agora vem **exclusivamente** do JWT, injetado pelo BearerAuth
+// middleware via ContextWithActor. O path do header X-Admin-Email
+// (que permitia atribuir o ato a email arbitrário) foi removido.
+//
+// Se o actor não estiver presente, retorna erro 401 — defesa em
+// profundidade caso um handler seja montado sem auth.
+func actorFromContext(r *http.Request) (cdomain.Actor, error) {
+	a, ok := ActorFromContext(r.Context())
+	if !ok || (a.ID == "" && a.Email == "") {
+		return cdomain.Actor{}, errors.New("actor required (JWT sub/email missing)")
 	}
-	return ucadmin.Actor{
-		Email: email,
+	return cdomain.Actor{
+		ID:    cdomain.AdminUserID(a.ID),
+		Email: a.Email,
 		IP:    r.RemoteAddr,
-	}
+	}, nil
 }
 
 func (h *BackupHandlers) startBackup(w http.ResponseWriter, r *http.Request) {
@@ -66,10 +76,14 @@ func (h *BackupHandlers) startBackup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "tenant id required")
 		return
 	}
-	actor := actorFromRequest(r)
+	actor, err := actorFromContext(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	res, err := h.backup.Export(r.Context(), ucbackup.ExportRequest{
 		TenantID:     tenantID,
-		Actor:        cdomain.Actor{ID: actor.ID, Email: actor.Email, IP: actor.IP},
+		Actor:        actor,
 		IncludeMedia: true,
 	})
 	if err != nil {
@@ -97,11 +111,15 @@ func (h *BackupHandlers) startRestore(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "backup_id required")
 		return
 	}
-	actor := actorFromRequest(r)
+	actor, err := actorFromContext(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	res, err := h.backup.Restore(r.Context(), ucbackup.RestoreRequest{
 		TenantID: tenantID,
 		BackupID: body.BackupID,
-		Actor:    cdomain.Actor{ID: actor.ID, Email: actor.Email, IP: actor.IP},
+		Actor:    actor,
 		DryRun:   body.DryRun,
 	})
 	if err != nil {
@@ -125,10 +143,14 @@ func (h *BackupHandlers) startReset(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	actor := actorFromRequest(r)
+	actor, err := actorFromContext(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
 	res, err := h.backup.Reset(r.Context(), ucbackup.ResetRequest{
 		TenantID:      tenantID,
-		Actor:         cdomain.Actor{ID: actor.ID, Email: actor.Email, IP: actor.IP},
+		Actor:         actor,
 		ConfirmText:   body.ConfirmText,
 		AdminPassword: body.AdminPassword,
 	}, h.verifier)

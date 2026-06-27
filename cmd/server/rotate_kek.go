@@ -128,16 +128,15 @@ func runRotateKEK(cfg config.Config, log zerolog.Logger) {
 
 // readKeyFromEnv lê a chave de env var direta ou via _FILE. Retorna
 // string vazia se nenhuma das duas estiver setada (caller decide se é erro).
+//
+// Issue #141 (H3 audit): quando vem de _FILE, valida permissão 0600
+// e rejeita symlink via config.ReadKeyFile.
 func readKeyFromEnv(env, envFile string) (string, error) {
 	if v := os.Getenv(env); v != "" {
 		return strings.TrimSpace(v), nil
 	}
 	if path := os.Getenv(envFile); path != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("read %s: %w", envFile, err)
-		}
-		return strings.TrimSpace(string(data)), nil
+		return config.ReadKeyFile(path)
 	}
 	return "", nil
 }

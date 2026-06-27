@@ -105,7 +105,12 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOIDCStart(w http.ResponseWriter, r *http.Request) {
-	authURL, _, err := s.login.StartOIDC(r.Context(), r.URL.Query().Get("next"))
+	// Issue #139 (H1 audit, DREAD 8.0): sanitiza `next` antes de passar
+	// para StartOIDC. Sem isso, atacante crafta
+	// `?next=https://evil.com/phish` e o user aterrissa em evil.com
+	// pós-login (open redirect, CWE-601).
+	next := sanitizeNext(r.URL.Query().Get("next"))
+	authURL, _, err := s.login.StartOIDC(r.Context(), next)
 	if err != nil {
 		p := PageData{Title: "Login", Error: "OIDC not available", Now: time.Now(), CSRFToken: csrfTokenFromContext(r)}
 		s.renderTempl(w, templates.Login(p, s.idp != nil))
@@ -155,5 +160,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   int(s.sessionCfg.TTL.Seconds()),
 	})
 
-	s.redirect(w, r, "/admin/")
+	redirectAfter := sanitizeNext(oidcState.RedirectAfter)
+	if redirectAfter == "/" {
+		redirectAfter = "/admin/"
+	}
+	s.redirect(w, r, redirectAfter)
 }

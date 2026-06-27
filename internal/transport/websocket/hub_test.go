@@ -99,7 +99,7 @@ func TestHandler_Rejects_NoTenant(t *testing.T) {
 	log := zerolog.Nop()
 	hub := NewHub(log)
 	tenantCtx := func(_ context.Context) (domain.TenantID, bool) { return "", false }
-	h := NewHandler(hub, func(ctx context.Context) (domain.TenantID, bool) { return tenantCtx(ctx) }, log)
+	h := NewHandler(hub, nil, func(ctx context.Context) (domain.TenantID, bool) { return tenantCtx(ctx) }, log)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/app/ws", nil)
@@ -112,7 +112,7 @@ func TestHandler_Rejects_NoTenant(t *testing.T) {
 func TestHandler_Upgrade(t *testing.T) {
 	log := zerolog.Nop()
 	hub := NewHub(log)
-	h := NewHandler(hub, func(_ context.Context) (domain.TenantID, bool) { return domain.TenantID("t1"), true }, log)
+	h := NewHandler(hub, nil, func(_ context.Context) (domain.TenantID, bool) { return domain.TenantID("t1"), true }, log)
 
 	// Servidor de teste que faz o upgrade e envia uma mensagem.
 	upgrader := websocket.Upgrader{
