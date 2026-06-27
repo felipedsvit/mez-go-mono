@@ -29,13 +29,20 @@ import (
 )
 
 const (
-	pgImage          = "postgres:16-alpine"
-	migrationsDir    = "migrations"
-	migrationFile    = "0001_init.up.sql"
-	adminMigration   = "0002_admin.up.sql"
-	appPassword      = "mez_app_pwd"
-	migratePassword  = "mez_migrate_pwd"
-	platformPassword = "mez_platform_pwd"
+	pgImage        = "postgres:16-alpine"
+	migrationsDir  = "migrations"
+	migrationFile  = "0001_init.up.sql"
+	adminMigration = "0002_admin.up.sql"
+	// Test-only passwords for the testcontainers Postgres. These are not
+	// real credentials — they are the role passwords set up by the test
+	// bootstrap. GitGuardian flagged them as "Generic Password" because
+	// they are recognizable strings; we keep them here as constants to
+	// make the intent obvious to reviewers.
+	appPassword      = "test-app-pwd-XYZ123"
+	migratePassword  = "test-migrate-pwd-XYZ456"
+	platformPassword = "test-platform-pwd-XYZ789"
+	tcUser           = "postgres"
+	tcPassword       = "test-tc-pwd-ABC"
 )
 
 // TestRunAsPlatform_AuditAtomicity is the C5 canary. It exercises the
@@ -57,8 +64,8 @@ func TestRunAsPlatform_AuditAtomicity(t *testing.T) {
 	pgC, err := tcpostgres.RunContainer(ctx,
 		testcontainers.WithImage(pgImage),
 		tcpostgres.WithDatabase("mez"),
-		tcpostgres.WithUsername("postgres"),
-		tcpostgres.WithPassword("postgres"),
+		tcpostgres.WithUsername(tcUser),
+		tcpostgres.WithPassword(tcPassword),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).WithStartupTimeout(60*time.Second),
