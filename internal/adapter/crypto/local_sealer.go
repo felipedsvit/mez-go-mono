@@ -53,6 +53,13 @@ func NewLocalSealer(masterKeyB64 string) (*LocalSealer, error) {
 	return &LocalSealer{env: env}, nil
 }
 
+// Envelope devolve o *pkgcrypto.Envelope subjacente. Usado para
+// SealSystem/OpenSystem (Fase 10 — system_settings cifrado direto
+// pela KEK, sem DEK/tenant).
+func (s *LocalSealer) Envelope() *pkgcrypto.Envelope {
+	return s.env
+}
+
 // Wrap cifra a DEK em claro com a KEK e devolve nonce||ciphertext.
 // A saída tem nonce (12 bytes) + ciphertext (32 bytes + 16 tag) = 60 bytes.
 func (s *LocalSealer) Wrap(ctx context.Context, plaintext []byte) ([]byte, error) {

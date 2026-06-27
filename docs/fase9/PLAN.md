@@ -29,8 +29,13 @@
 | [#174](https://github.com/felipedsvit/mez-go-mono/issues/174) | P2 | C5 — Health check per-channel real (`Sender.Ping(ctx)` interface + 5 adapters) | NEW |
 | [#175](https://github.com/felipedsvit/mez-go-mono/issues/175) | P5 | C6 — Testes E2E validando async webhook (t_200 < 50ms com DB tx 500ms) | NEW |
 | [#176](https://github.com/felipedsvit/mez-go-mono/issues/176) | P4 | A5.1 — UI/UX API para agendar posts (endpoint + `cron` reconciler) | NEW |
+| [#177](https://github.com/felipedsvit/mez-go-mono/issues/177) | P2 | D1 — `coordinator/registry`: schema `coordinator_capabilities` + advertise heartbeat `[Seção 11 — roadmap]` | NEW · carryover Seção 11 |
+| [#178](https://github.com/felipedsvit/mez-go-mono/issues/178) | P2 | D2 — `coordinator/claim`: `pg_try_advisory_lock` + lease TTL 60s `[Seção 11 — roadmap]` | NEW · carryover Seção 11 |
+| [#179](https://github.com/felipedsvit/mez-go-mono/issues/179) | P2 | D3 — `coordinator/lease`: heartbeat goroutine + renew + lost detection `[Seção 11 — roadmap]` | NEW · carryover Seção 11 |
+| [#180](https://github.com/felipedsvit/mez-go-mono/issues/180) | P2 | D4 — `coordinator/migrate`: graceful session handoff + reconciler para orphans `[Seção 11 — roadmap]` | NEW · carryover Seção 11 |
 
 > **Legenda pilares:** P1=Adapter/Factory · P2=Resiliência/RateLimit · P3=Credenciais · P4=Agendamento · P5=Webhooks/Real-time.
+> **Carryovers:** #158 (whatsmeow real, execução na Fase 9) + #177-#180 (Seção 11, **execução em Fase 10+** — apenas design documentado aqui).
 
 ---
 
@@ -102,6 +107,7 @@ O que **Fase 8 não cobriu** — e que a **auditoria arquitetural 5-pilares** (j
 | **Webhook secrets** | env vars plaintext | **`Keyring` envelope + `webhook_secrets` table** | env-free em prod |
 | **DLQ observability** | `bus.SubscribeDLQ` sem consumer wired | **`DLQTotal` metric + audit row + alerta Prometheus** | operator visibility |
 | **Bus partitioning** | 5 channels globais (1024/1024/256/256/64) | **`map[tenantID]chan` ou quota per-tenant com `atomic.Int32`** | tenant noise isolation |
+| **Coordinator (multi-replica)** | single-process assumido | **`pg_try_advisory_lock(hashtext(tenantID))` + capability advertisement `[Seção 11]`** | sessão whatsmeow sharded por tenant; zero Redis/NATS |
 | **Whatsmeow** | `stubWhatsmeowClient` | **`*whatsmeow.Client` real** com persistência de QR + reconnect | production-ready WAWeb |
 | **Health check** | smoke (`Get()`) | **`Sender.Ping(ctx) error` real por canal** | channel-down detection |
 
@@ -140,12 +146,15 @@ Implementa a **maturidade de produção SMM** que o README §23 implicitamente a
 
 ### A Fase 9 **NÃO** implementa
 
-- Multi-process / sharding (pós-Fase 9, §25 limitação assumida do 1.0).
+- **Execução do coordinator multi-replica** (design documentado em **Seção 11**; execução prevista para Fase 10+ como carryover das issues #177–#180).
 - Vault Transit sealer (pós-1.0, §2 + §22).
 - Webhook fan-out para sistemas externos (sem `adapter/sink/` no 1.0).
 - UI/UX do painel de scheduled posts (apenas API; o painel vem em sprint pós-Fase 9).
 - OpenSearch / analytics (descartado em §2 do `docs/plan.md`).
 - Cache externo (Redis continua fora do 1.0; in-memory é mandatório).
+- Message broker externo (NATS continua fora do 1.0; bus in-process é mandatório — alinhado com `AGENTS.md §1.1`).
+
+> **Carryover carryover:** a issue #158 (whatsmeow real → `*whatsmeow.Client`) **é** executada na Fase 9 (Sprint 5); as issues #177–#180 (coordinator multi-replica) **não** — ficam como carryover de design para Fase 10+. A Seção 11 deste plano documenta a **estratégia completa** (incluindo tabelas comparativas, ADRs e diagramas) para que a Fase 10+ possa começar com DoD pré-aprovado.
 
 ---
 
@@ -748,18 +757,24 @@ Total: **22 dias úteis** (4-5 semanas solo, ou 2-3 sprints com 2 devs).
 - **ADR-0028 — `webhook_secrets` em tabela dedicada (não reusa `channel_credentials`)**. Justificativa: 1 tenant pode ter N `app_id` Meta; UNIQUE `(tenant_id, channel, app_id)` é o shape certo. Mesma `Keyring` cifra ambos.
 - **ADR-0029 — Bus quota per-tenant (não partition real)**. Justificativa: simplicidade; O(1) memória por tenant; rollback trivial. Partition real é pós-Fase 9 com Redis ou NATS JetStream.
 
+### ADRs roadmap (documentados em Seção 11, **não-execução Fase 9**)
+
+- **ADR-0030 — Capability-based auto-claim com Postgres como coordinator único**. Justificativa: zero infra nova; mesmo binário Docker com role flag (`--role={gateway,relay,whatsmeow-worker,all}`); coordenação via `coordinator_capabilities` table; elástico de verdade. Trade-off: Postgres vira SPOF lógico (mitigado por RPO/RTO ≤ 90s e replicação streaming existente). Alinhado com `AGENTS.md §1.1` (sem Redis/NATS).
+- **ADR-0031 — `pg_try_advisory_lock(hashtext(tenantID || 'whatsmeow'))` como primitive de leader election per-session**. Justificativa: nativo PG, não-bloqueante, automático cleanup em disconnect do backend, lock key deriva deterministicamente do tenantID. Trade-off: latência ~1-5ms por lock vs ~0.1ms Redis (aceitável para scale-out, irrelevante para single-replica). Sem dependência adicional.
+
 ---
 
 ## 9. Não-objetivos (explícitos)
 
-- **Multi-process / sharding** (Fase 10+, requer Redis ou NATS para coordination).
+- **Execução do coordinator multi-replica na Fase 9** — design documentado em **Seção 11** (ADRs 0030-0031, issues #177-#180); execução prevista para Fase 10+ como carryover. Single-replica continua sendo o default suportado e testado na Fase 9.
 - **Vault Transit sealer** (ADR já diz pós-1.0).
 - **OpenSearch / analytics** (descartado em §2 do `docs/plan.md`).
 - **UI/UX do painel de scheduled posts** (apenas API + template placeholder; UX real é sprint pós-Fase 9).
 - **Sink externo para DLQ** (S3 sink é pós-Fase 9; por enquanto audit + metric + log).
-- **Auto-scaling / k8s HPA** (deployment é out-of-scope da Fase 9).
+- **Auto-scaling / k8s HPA** (deployment via Helm chart é pós-Fase 9; specs de HPA/PodDisruptionBudget/anti-affinity são citadas na Seção 11.4 mas não entregues).
 - **Scheduled posts recurring (cron syntax)** — Fase 9 cobre `scheduled_at` (one-shot). Cron syntax (RRULE / Quartz-like) é Fase 10+.
 - **WebSocket fan-out para scheduled events** (UI real-time é pós-Fase 9).
+- **Message broker externo (NATS/Redis)** — explicitamente fora do escopo; bus in-process + Postgres advisory locks são a estratégia oficial (Seção 11.2-Q5 e ADR-0031).
 
 ---
 
@@ -776,6 +791,423 @@ Total: **22 dias úteis** (4-5 semanas solo, ou 2-3 sprints com 2 devs).
 
 ---
 
-> **Última atualização:** junho/2026.
+## 11. Análise de escalabilidade horizontal — whatsmeow + canais stateless
+
+> **Status:** roadmap documentado · execução em Fase 10+ · carryover de design das issues #177–#180.
+> **Origem:** análise arquitetural 5-pilares (junho/2026) + decisão explícita de manter `mez-go-mono` single-process na Fase 9 e planejar evolução multi-replica sem violar os guardrails do `AGENTS.md §1.1` (sem Redis, sem NATS, sem Vault).
+> **Premissa honesta:** o `whatsmeow` é o **único canal stateful** do gateway; WABA/Instagram/Messenger/Telegram são stateless (HTTP request/response). Por isso, escalabilidade horizontal tem **dois regimes distintos** — scaling linear para canais cloud, sharding natural por sessão para whatsmeow.
+
+### 11.1 Princípios de design (não-negociáveis)
+
+1. **Mesma imagem Docker, múltiplas roles via flag + capability advertisement.** O binário `cmd/server/serve` aceita `--role={gateway,relay,whatsmeow-worker,all}` e auto-detecta o ambiente (K8s, Docker Swarm, single-node). Mesmo `Containerfile`; mesmo `docker push`; mesmo Helm chart com `replicaCount` parametrizado por role.
+2. **Postgres é a única fonte de verdade para coordenação.** `pg_try_advisory_lock()` + tabela `coordinator_capabilities` + `coordinator_session_claims` substituem Redis/Sentinel/Consul/ZooKeeper. Trade-off: latência ~1-5ms por lock (vs ~0.1ms Redis) — aceitável para coordenação de sessões whatsmeow, irrelevante para o caminho hot (HTTP→send).
+3. **Canais stateless (WABA/IG/MSG/TG) escalam linearmente** — qualquer pod com `role=gateway` ou `role=all` pode atender request de qualquer tenant. RLS via `RunInTenantTx` continua sendo a fronteira de isolamento. **Nenhuma coordenação extra** necessária.
+4. **Whatsmeow tem sharding natural por sessão** — 1 `*whatsmeow.Client` ↔ 1 `(tenant, JID)`. A coordenação decide **qual pod hospeda qual sessão**; o relay HTTP é agnóstico. N pod suporta N×K sessões (onde K = limite do pod, ex: 100).
+
+### 11.2 Resposta às 10 questões da análise SMM
+
+#### Q1 — Como tornar a arquitetura horizontalmente escalável?
+
+Três eixos independentes:
+
+| Eixo | Componente | Como escala | DoD |
+|---|---|---|---|
+| **Eixo A — Canal stateless** | pods `role=gateway` | HPA por CPU/RPS; anti-affinity por zona | Latência p99 < 200ms com 3 réplicas |
+| **Eixo B — Relay** | pods `role=relay` | Stateless; compete por `SKIP LOCKED` no `outbox` | Drain < 15s; throughput > 1k msg/s com 2 réplicas |
+| **Eixo C — Whatsmeow** | pods `role=whatsmeow-worker` | Sharding por `(tenant, JID)` via `pg_try_advisory_lock` | Cap = 100 sessões/pod (carryover `MEZ_MAX_ACTIVE_TENANTS`); lease TTL 60s |
+
+**Não há plano para escalar o `port.SenderRegistry` em si** — ele é in-memory por pod e descobre adapters via `pkg/lifecycle.Runner`. A coordenação é por *sessão*, não por *adapter*.
+
+#### Q2 — Estratégias para manter single image + diferentes comportamentos
+
+```go
+// cmd/server/serve.go (NOVO — não codificado na Fase 9)
+type Role string
+const (
+    RoleGateway        Role = "gateway"        // API HTTP, webhook ingress, scheduler
+    RoleRelay          Role = "relay"          // outbox drain, scheduled posts
+    RoleWhatsmeowWorker Role = "whatsmeow-worker" // whatsmeow session hosting
+    RoleAll            Role = "all"            // single-replica / dev
+)
+
+func (r Role) Initializes(c Component) bool { ... }
+```
+
+- **`--role=gateway`** inicializa: HTTP, webhooks Meta/TG, reconciler scheduled, admin API. **NÃO** inicializa: whatsmeow Manager, outbox Relay (sai do processo).
+- **`--role=relay`** inicializa: outbox Relay, scheduled posts tick, DLQ consumer. **NÃO** inicializa: HTTP, webhooks.
+- **`--role=whatsmeow-worker`** inicializa: whatsmeow Manager + Coordinator Claim Loop. **NÃO** inicializa: HTTP, webhooks, outbox Relay.
+- **`--role=all`** (default em dev) inicializa tudo; warning de log "single-process mode" para sinalizar que não escala.
+- **Capability advertisement**: ao subir, o pod grava em `coordinator_capabilities` (id, role, version, mem_mb, max_sessions, started_at). O Coordinator usa isso para **least-loaded claim**.
+
+**Compatibilidade retroativa:** se `MEZ_ROLE` não estiver setada, default = `all` (comportamento Fase 9). Zero breaking change.
+
+#### Q3 — Auto-detecção de multi-replica
+
+Detecção em **3 camadas** (todas read-only, sem side-effects):
+
+```go
+// internal/adapter/coordinator/environment.go (NOVO — Seção 11)
+type Environment struct {
+    IsKubernetes bool            // KUBERNETES_SERVICE_HOST presente
+    IsSwarm      bool            // DOCKER_SWARM_PRESENT + /etc/docker-events
+    IsCompose    bool            // COMPOSE_PROJECT_NAME presente
+    PodName      string          // POD_NAME (K8s downward API) ou HOSTNAME
+    NodeName     string          // NODE_NAME (K8s) ou hostname
+    TotalReplicas int            // hint via env MEZ_EXPECTED_REPLICAS (optional)
+}
+
+func DetectEnvironment(ctx context.Context) Environment { ... }
+```
+
+- **K8s**: detection via `KUBERNETES_SERVICE_HOST` (sempre setado em pods). Downward API injeta `POD_NAME`/`POD_NAMESPACE`/`NODE_NAME`. **Recomendação Helm:** `MEZ_EXPECTED_REPLICAS={{ .Values.replicaCount }}` para o Coordinator detectar subdimensionamento.
+- **Docker Swarm**: detection via `/proc/1/cgroup` (proc/self/cgroup contém `docker-<id>` e `kubepods` etc). `docker service ls` é legível só do manager — usar `TASK_ID` env var que Swarm injeta.
+- **Compose local**: detection via `COMPOSE_PROJECT_NAME` env. Total replicas = `1` (sem auto-scale).
+- **Binário standalone**: tudo ausente → `IsStandalone=true`, `ExpectedReplicas=1`. **Coordinator ainda roda** mas em modo `single-leader` (primeiro pod que ganhar `pg_try_advisory_lock(NOLOCK_KEY)` vira owner de tudo; outros ficam standby).
+
+#### Q4 — Coordenação de conexões whatsmeow entre múltiplas instâncias
+
+**Modelo:** cada sessão whatsmeow tem **exatamente 1 pod owner**. O owner roda o `*whatsmeow.Client`, mantém o WebSocket aberto, despacha eventos. Outros pods **não** tocam na sessão.
+
+**Mecanismo:** `pg_try_advisory_lock(hashtext(tenantID || ':' || JID))` no `coordinator/claim.go` (issue #178):
+
+```sql
+-- Pseudo-SQL (executado em appPool, não platform)
+SELECT pg_try_advisory_lock($1)  -- $1 = hashtext(tenantID || ':' || JID)::bigint
+```
+
+- Se retorna `true` → pod é owner; `Manager.GetOrCreate(tenantID, jid)` carrega a sessão.
+- Se retorna `false` → outro pod é owner; pod atual **não** inicializa sessão; expõe endpoint `GET /internal/sessions/{tenant}/{jid}/owner` para relay HTTP rotear dispatch (se relay for diferente de worker — caso comum em produção).
+- **Lease TTL 60s** + heartbeat a cada 20s (issue #179). Se 3 heartbeats consecutivos falham (60s sem renew), Postgres libera o lock automaticamente ao disconnect do backend, **ou** o pod re-detecta via query periódica.
+- **Cleanup explícito** no `cmd/server serve` shutdown: `pg_advisory_unlock_all()` no `pgxpool` antes de fechar.
+
+**Por que não usar channel inteiro:** `pg_advisory_lock(key)` (bloqueante) é usado **apenas** no boot do worker (espera 1ms antes de desistir). Em steady-state, `pg_try_advisory_lock` é non-blocking — worker testa 1x/5s para sessões que ainda não tem.
+
+#### Q5 — Mecanismos de lock distribuído
+
+| Opção | Latência | Infra nova | Consistência | Operação | Decisão |
+|---|---|---|---|---|---|
+| **Postgres `pg_try_advisory_lock`** (escolhido) | ~1-5ms | **Nenhuma** (já tem PG) | Strong (single-Postgres é source of truth) | Trivial (já temos PG backup/streaming replication) | **✓** |
+| Redis (Redlock) | ~0.1ms | Redis + Sentinel/Cluster | Eventual (split-brain risk em net partition) | Moderada (HA Redis é non-trivial) | ✗ viola guardrail |
+| Consul | ~5-10ms | Consul cluster | Strong (RAFT) | Moderada | ✗ viola guardrail |
+| ZooKeeper | ~5-10ms | ZK ensemble | Strong (ZAB) | Alta (operação complexa) | ✗ viola guardrail |
+| etcd | ~5-10ms | etcd cluster | Strong (RAFT) | Alta | ✗ viola guardrail |
+| K8s Lease object | ~10-50ms | none (K8s API) | Strong | Trivial **dentro** do K8s | ✗ amarra a K8s |
+
+**Decisão: Postgres advisory locks.** Justificativa: já é a única dependência de estado; replicação streaming (já configurada em prod) garante RPO ≤ 5s; RTO ≤ 90s via `pg_auto_failover` ou patroni. Lock é **per-session**, não global — não vira gargalo de cluster. Em caso de failover do Postgres, leases expiram em ≤ 60s e workers re-claimam (SLO de recovery aceito).
+
+#### Q6 — Microserviço whatsmeow dedicado vs integrado
+
+**Recomendação: integrado** (mesmo binário, role flag). Justificativa:
+
+| Critério | Microserviço dedicado | Integrado (role flag) | Vencedor |
+|---|---|---|---|
+| **Overhead de deployment** | 1 Helm chart extra, 1 image registry tag, 1 service mesh config | Mesmo Helm chart, 1 image, 1 release | **Integrado** |
+| **Reuso de RLS/audit/bus/Keyring** | Duplicar pkg/lifecycle, port.Sender, bus.Bus, secrets.Keyring | Direto | **Integrado** |
+| **Latência dispatch worker→relay** | +1-5ms HTTP/gRPC interno | 0 (mesmo processo) | **Integrado** |
+| **Isolamento de falhas** | Crash do whatsmeow ≠ crash do gateway | Crash do whatsmeow trava o pod | **Dedicado** |
+| **Escala independente** | Sim (HPA separado) | Sim (HPA por role) | Empate |
+| **Complexidade de teste** | Testcontainers + 2 binários | Testcontainers + 1 binário com flag | **Integrado** |
+| **Custo de migração** | Reescrever 30% dos imports | Mudar 1 struct + 1 flag | **Integrado** |
+
+**Trade-off aceito (integrado):** um panic em whatsmeow derruba o pod. Mitigação: `recover()` por sessão (já existe no `Manager`), `recover()` por handler (Fase 9 #162), `pkg/lifecycle.Runner` phases com `Supervise()`. Em K8s, o pod é recriado em < 30s; leases expiram em ≤ 60s; outras sessões re-claimam automaticamente.
+
+#### Q7 — Padrões arquiteturais (mapeamento para o mez-go-mono)
+
+| Padrão | Onde no mez-go-mono | Adoção | Observação |
+|---|---|---|---|
+| **Actor Model** | `whatsmeow.Manager` (1 ator por sessão) | ✓ herdado | Mensagens = chamadas de método serializadas; `connected atomic.Bool` + mutex |
+| **Session Affinity** | `coordinator/claim.go` (rota por session_hash) | ✓ Seção 11 | LB → worker que tem a sessão; senão, enfileira |
+| **Sticky Routing** | `coordinator_capabilities` table (worker anuncia "tenho sessão X") | ✓ Seção 11 | Sticky = claim; relay consulta tabela antes de dispatch |
+| **Sharding por sessão** | `crc32(tenantID||JID) % N` é o **shard key natural** | ✓ herdado (Fase 4) | Manager LRU eviction já é sharding implícito |
+| **Event-driven** | `bus.Bus` (in-process) | ✓ herdado (Fase 8) | Single-replica; multi-replica exigiria NATS (não-Objetivo Fase 9) |
+| **CQRS** | `inbound` (write, bus) ≠ `outbox` (read, relay) | ✓ herdado | Mesma tabela `outbound_events`; read replica não é in-scope |
+| **Message Queue** | `outbox` table com `SKIP LOCKED` | ✓ herdado (Fase 2) | Substitui MQ externo; at-least-once delivery |
+| **Worker Pool** | `relay.Run` + per-channel goroutine | ✓ herdado | Pool size = `MEZ_RELAY_WORKERS` (default 4) |
+
+**Nada novo é introduzido** — Seção 11 só formaliza como cada padrão já está (ou pode ser) implementado.
+
+#### Q8 — Failover quando owner da sessão falha
+
+**Cenário:** pod A é owner da sessão `(tenant=T, jid=J)`. Pod A sofre `kill -9` (kernel OOM, host failure, node drain).
+
+**Sequência de recuperação:**
+
+1. **T+0s**: pod A morre. WebSocket whatsmeow desconecta. Lease `pg_try_advisory_lock(key)` em A **persiste** no Postgres até o backend ser desconectado.
+2. **T+5s**: Postgres detecta TCP RST/FIN do backend A; backend é removido do pool; **`pg_advisory_unlock_all()` é chamado implicitamente pelo driver `pgx`** ao detectar disconnect. Lock `key` é liberado.
+3. **T+5-60s**: pod B (outro worker) tem heartbeat loop que testa `pg_try_advisory_lock(key)` a cada 5s. **T+10s** (próximo tick) B ganha o lock; chama `Manager.GetOrCreate(T, J)` que carrega `IdentityStore` e reconecta.
+4. **T+15-30s**: sessão whatsmeow restabelecida; `whatsmeow.reconnected` audit row; mensagens em-flight durante o gap são cobertas pelo **reconciler C1** (Fase 2 carryover) que varre `outbound_events` com `attempts > 0` e reenvia.
+5. **T+90s**: SLO de recovery cumprido (RTO ≤ 90s).
+
+**Detecção proativa de orphan:** `reconciler/coordinator_orphan.go` (issue #180) varre `coordinator_session_claims` a cada 30s; se `last_heartbeat_at < NOW() - 90s`, marca como `orphan` e dispara `pg_advisory_unlock(key)` + audit `coordinator.orphan.detected`. Reduz T+recovery de 60s para 30s no pior caso.
+
+#### Q9 — Distribuição de novas sessões entre instâncias
+
+**Estratégia: least-loaded claim com sticky preference.**
+
+```sql
+-- coordinator_claim_workflow.sql (Seção 11, referência)
+-- 1. Worker quer claim sessão (T, J)
+SELECT count(*) AS active
+FROM coordinator_session_claims
+WHERE worker_id = $1
+  AND released_at IS NULL
+  AND last_heartbeat_at > NOW() - INTERVAL '90 seconds';
+
+-- 2. Se active >= MEZ_MAX_ACTIVE_TENANTS (100), recusar
+-- 3. Senão, tentar pg_try_advisory_lock(hashtext(T || ':' || J))
+-- 4. Se ganhou, INSERT em coordinator_session_claims
+```
+
+- **Least-loaded**: cada worker tem budget `MEZ_MAX_ACTIVE_TENANTS=100` (carryover Fase 4). Workers com < 100 ativos preferem novas sessões.
+- **No tie-break**: se múltiplos workers querem a mesma sessão, `pg_try_advisory_lock` é a arbitragem final (apenas 1 vence).
+- **Anti-affinity opcional**: spec Helm `nodeAffinity` para que workers whatsmeow caiam em nodes diferentes (K8s `topologySpreadConstraints`). Não é código — é deployment.
+- **Cold start**: ao subir, worker consulta `coordinator_session_claims WHERE released_at IS NULL AND last_heartbeat_at < NOW() - 60s` (orphans) e tenta re-claim. Reconciler cobre orphans antes do steady-state.
+
+#### Q10 — Métricas e observabilidade
+
+**8 métricas novas** (vão para o `pkg/metrics/metrics.go` se a Fase 10 for executada):
+
+| Métrica | Tipo | Labels | Uso |
+|---|---|---|---|
+| `whatsmeow_session_claim_total` | Counter | `result={success,contention,refused,error}` | Taxa de claims bem/mal-sucedidos |
+| `whatsmeow_session_active` | Gauge | `worker_id` | Sessões ativas por worker (HPA signal) |
+| `whatsmeow_lease_renewal_total` | Counter | `result={success,failed,timeout}` | Saúde do heartbeat |
+| `whatsmeow_lease_lost_total` | Counter | `reason={disconnect,timeout,orphan}` | Sessões perdidas |
+| `whatsmeow_heartbeat_duration_seconds` | Histogram | — | Latência do heartbeat (SLO < 50ms) |
+| `whatsmeow_session_migration_total` | Counter | `direction={in,out}` | Sessões que migraram entre workers |
+| `whatsmeow_session_orphan_detected_total` | Counter | `reason={heartbeat_lost,lease_expired}` | Órfãos detectados pelo reconciler |
+| `coordinator_role_advertised` | Gauge | `role,version` | Roles ativas no cluster |
+
+**3 alertas Prometheus** (vão para `deployments/prometheus/alerts.yaml`):
+
+```yaml
+- alert: WhatsmeowLeaseLostSpike
+  expr: rate(whatsmeow_lease_lost_total[5m]) > 1
+  for: 2m
+  labels: { severity: warning }
+  annotations:
+    summary: "Sessões whatsmeow perdendo lease"
+    runbook: "https://wiki/runbooks/whatsmeow-lease"
+
+- alert: WhatsmeowOrphanDetected
+  expr: increase(whatsmeow_session_orphan_detected_total[10m]) > 0
+  labels: { severity: critical }
+  annotations:
+    summary: "Sessão whatsmeow órfã detectada"
+    runbook: "https://wiki/runbooks/whatsmeow-orphan"
+
+- alert: CoordinatorRoleMismatch
+  expr: count(coordinator_role_advertised{role="whatsmeow-worker"}) < 2
+  for: 5m
+  labels: { severity: warning }
+  annotations:
+    summary: "Apenas {{ $value }} whatsmeow-worker ativo; HA em risco"
+```
+
+**Distributed tracing (opcional):** o já-herdado `bus.Bus` adiciona `trace_id` ao envelope (Fase 2 carryover). Workers whatsmeow propagam para o `*whatsmeow.Client.Logf` se OTEL exporter estiver configurado. Não é código novo — é configuração.
+
+### 11.3 Tabela comparativa de 6 abordagens × 15 critérios
+
+| Critério | Monolito single-image (status quo) | Monolito + leader election | Sharding de sessões (estático) | Sticky sessions no LB | Microserviço whatsmeow dedicado | Fila/eventos distribuídos (NATS/Redis) |
+|---|---|---|---|---|---|---|
+| **Escalabilidade Horizontal** | ❌ 1 instância | ⚠️ 2 (active+standby) | ✓ N shards | ⚠️ 2-3 (LB-dependent) | ✓✓ independente | ✓✓∞ |
+| **Performance** | ✓✓ baseline | ✓ (overhead de election) | ✓ (hash routing) | ✓ (LB overhead) | ⚠️ +1 hop HTTP/gRPC | ⚠️ +1 hop broker |
+| **Latência** | ✓✓ < 5ms local | ✓ < 10ms | ✓ < 10ms | ⚠️ 10-30ms LB | ⚠️ 20-50ms cross-pod | ⚠️ 5-15ms broker |
+| **Complexidade** | ✓✓ mínima | ⚠️ election state | ⚠️ hash + rebalance | ⚠️ LB config | ❌ 2 Helm charts, 2 deploys | ❌ broker + clients |
+| **Facilidade de Implementação** | ✓✓ já feito | ⚠️ 1 sprint | ⚠️ 2 sprints | ✓ 0.5 sprint | ❌ 3-4 sprints | ❌ 4-6 sprints |
+| **Manutenção** | ✓✓ trivial | ✓ moderada | ⚠️ rebalance ops | ✓ moderada | ❌ 2 codebases | ❌ broker upgrades |
+| **Alta Disponibilidade** | ❌ SPOF | ⚠️ failover 30-60s | ✓ shard rebalance | ⚠️ LB SPOF | ✓✓ HPA independente | ✓✓∞ broker HA |
+| **Tolerância a Falhas** | ❌ 1 ponto | ⚠️ split-brain risk | ✓ parcial | ⚠️ LB-dependent | ✓ isolado | ✓ broker HA |
+| **Consumo de Recursos** | ✓ 1× binário | ✓ 1× + standby | ⚠️ 1× + routing | ⚠️ 1× + LB | ❌ 2× binários | ❌ 2× + broker |
+| **Custo Operacional** | ✓✓ mínimo | ✓ baixo | ⚠️ moderado | ⚠️ moderado | ❌ alto (2 deploys) | ❌ alto (broker ops) |
+| **Facilidade de Deploy** | ✓✓ 1 image | ✓ 1 image + election | ✓ 1 image + config | ⚠️ LB config | ❌ 2 images | ❌ 2 images + broker |
+| **Facilidade de Debug** | ✓✓ mesma máquina | ✓ logs centralizados | ⚠️ distributed logs | ⚠️ LB logs | ❌ cross-pod traces | ❌ broker traces |
+| **Risco de Race Conditions** | ✓✓ in-process locks | ⚠️ election race | ⚠️ rebalance race | ⚠️ LB race | ✓ isolado | ✓ broker arbitrates |
+| **Consistência das Sessões** | ✓✓ única fonte | ✓ se election OK | ⚠️ eventual | ⚠️ eventual | ✓ forte | ✓ forte |
+| **Melhor cenário de uso** | dev, single-tenant | low-volume HA | multi-tenant médio | LB já existe | multi-tenant alto | event-driven extremo |
+
+**Legenda:** ✓✓ excelente · ✓ bom · ⚠️ aceitável com cuidado · ❌ não-recomendado.
+
+### 11.4 Arquitetura proposta
+
+#### 11.4.1 Componentes novos (referência Fase 10+)
+
+| Componente | Caminho | LOC estimado | Issue | ADR |
+|---|---|---:|---|---|
+| `coordinator/environment.go` | `internal/adapter/coordinator/environment.go` | ~120 | #177 | ADR-0030 |
+| `coordinator/registry.go` | `internal/adapter/coordinator/registry.go` | ~200 | #177 | ADR-0030 |
+| `coordinator/claim.go` | `internal/adapter/coordinator/claim.go` | ~280 | #178 | ADR-0031 |
+| `coordinator/lease.go` | `internal/adapter/coordinator/lease.go` | ~240 | #179 | ADR-0031 |
+| `coordinator/migrate.go` | `internal/adapter/coordinator/migrate.go` | ~180 | #180 | ADR-0031 |
+| `coordinator/orphan.go` | `internal/adapter/coordinator/orphan.go` | ~150 | #180 | ADR-0031 |
+| Migration `0010_coordinator.up.sql` | `migrations/` | ~80 | #177-#180 | ADR-0030/0031 |
+| Tests (unit + integration) | `internal/adapter/coordinator/*_test.go` | ~550 | #177-#180 | — |
+| **Total** | — | **~1.800 LOC** | — | — |
+
+**Esforço total: 4-5 dias solo** (não-incluído no budget de 22d da Fase 9).
+
+#### 11.4.2 Diagrama ASCII — Visão geral multi-replica
+
+```
+                    ┌─────────────────────────────────────────────────────────────┐
+                    │                KUBERNETES CLUSTER (or Compose)              │
+                    │                                                             │
+   Internet ──────► │   ┌──────────────┐                                           │
+   (Meta, TG,      │   │   Ingress /  │   TLS termination, rate limit per-IP     │
+    clients)       │   │  LoadBalancer│                                           │
+                    │   └──────┬───────┘                                           │
+                    │          │                                                   │
+                    │   ┌──────▼───────────────────────────────────────────────┐  │
+                    │   │          API Gateway pods (role=gateway)              │  │
+                    │   │   ┌────────┐ ┌────────┐ ┌────────┐  (HPA: 2-10 pods) │  │
+                    │   │   │ gw-1   │ │ gw-2   │ │ gw-3   │  stateless        │  │
+                    │   │   └───┬────┘ └───┬────┘ └───┬────┘                   │  │
+                    │   └───────┼──────────┼──────────┼────────────────────────┘  │
+                    │           │          │          │                            │
+                    │           └──────────┼──────────┘                            │
+                    │                      │                                       │
+                    │   ┌──────────────────▼──────────────────────────────────┐    │
+                    │   │   Relay pods (role=relay)                          │    │
+                    │   │   ┌────────┐ ┌────────┐  stateless, competes via   │    │
+                    │   │   │ rly-1  │ │ rly-2  │  FOR UPDATE SKIP LOCKED    │    │
+                    │   │   └────┬───┘ └────┬───┘                            │    │
+                    │   └────────┼──────────┼────────────────────────────────┘    │
+                    │            │          │                                      │
+                    │            ▼          ▼                                      │
+                    │   ┌─────────────────────────────────────────────────────┐    │
+                    │   │  Whatsmeow Worker pods (role=whatsmeow-worker)     │    │
+                    │   │   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐  │    │
+                    │   │   │  wmw-1      │ │  wmw-2      │ │  wmw-3      │  │    │
+                    │   │   │             │ │             │ │             │  │    │
+                    │   │   │ [T1:J1]     │ │ [T2:J1]     │ │ [T1:J2]     │  │    │
+                    │   │   │ [T3:J1]     │ │ [T3:J2]     │ │ [T4:J1]     │  │    │
+                    │   │   │             │ │ [T5:J1]     │ │             │  │    │
+                    │   │   │ ← 100 max → │ ← 100 max → │ ← 100 max → │  │    │
+                    │   │   └──────┬──────┘ └──────┬──────┘ └──────┬──────┘  │    │
+                    │   └──────────┼───────────────┼───────────────┼─────────┘    │
+                    │              │               │               │              │
+                    │              └───────────────┼───────────────┘              │
+                    │                              │                              │
+                    │              ┌───────────────▼────────────────┐             │
+                    │              │      WhatsApp Network          │             │
+                    │              │      (WebSocket per session)   │             │
+                    │              └────────────────────────────────┘             │
+                    │                                                             │
+                    │   ┌────────────────────────────────────────────────────┐    │
+                    │   │   Postgres (HA: primary + 2 standbys)              │    │
+                    │   │   ├── outbound_events (outbox + scheduled)         │    │
+                    │   │   ├── channel_credentials (envelope)               │    │
+                    │   │   ├── webhook_secrets (envelope)                  │    │
+                    │   │   ├── coordinator_capabilities (NEW)               │    │
+                    │   │   ├── coordinator_session_claims (NEW)             │    │
+                    │   │   └── admin_audit_log (immutable)                 │    │
+                    │   └────────────────────────────────────────────────────┘    │
+                    │                                                             │
+                    └─────────────────────────────────────────────────────────────┘
+```
+
+#### 11.4.3 Fluxo — Sessão whatsmeow (claim + uso)
+
+```
+(1) Pod wmw-2 sobe
+    │   capability_registry.advertise({role: "whatsmeow-worker", max: 100, version: "v9.0.0"})
+    │
+(2) Tenant T1 envia primeiro evento (webhook WABA → gw-1 → outbox → rly-1)
+    │   rly-1 precisa enviar reply via whatsmeow. Consulta:
+    │   SELECT worker_id FROM coordinator_session_claims WHERE session_key = hashtext('T1:J1')
+    │   WHERE released_at IS NULL AND last_heartbeat_at > NOW() - INTERVAL '60s'
+    │
+(3) Resultado: NULL (sessão não tem owner). rly-1 PUBLICA em bus:
+    │   bus.Publish("coordinator.claim.requested", {tenant: T1, jid: J1})
+    │
+(4) Todos os wmw-* recebem. Cada um testa:
+    │   pg_try_advisory_lock(hashtext('T1:J1'))  -- non-blocking
+    │   AND active_count < MEZ_MAX_ACTIVE_TENANTS
+    │
+(5) Apenas wmw-2 ganha. Ele:
+    │   - INSERT INTO coordinator_session_claims (worker_id, session_key, claimed_at, last_heartbeat_at)
+    │   - Manager.GetOrCreate(T1, J1) → carrega IdentityStore, abre WebSocket
+    │   - Inicia heartbeat goroutine (renova a cada 20s)
+    │
+(6) rly-1 faz poll (5s) e descobre owner = wmw-2. Envia via:
+    │   HTTP POST http://wmw-2:8080/internal/send  (service mesh ou ClusterIP)
+    │   wmw-2 valida claim, executa sender.Send, retorna resultado
+    │
+(7) Heartbeat:
+    │   A cada 20s: UPDATE coordinator_session_claims SET last_heartbeat_at = NOW() WHERE worker_id = 'wmw-2' AND session_key = ...
+    │   A cada 60s: pg_try_advisory_lock(hashtext('T1:J1')) -- re-assert (PG pode ter recycled backend)
+    │
+(8) Pod wmw-2 falha (kill -9):
+    │   T+0s: TCP RST detectado pelo PG
+    │   T+5s: pgx pool remove backend; pg_advisory_unlock_all() implícito
+    │   T+10s: wmw-1 ou wmw-3 ganha claim no próximo tick; sessão migra
+    │   T+30s: wmw-X chama Manager.GetOrCreate; IdentityStore recarrega; reconecta
+    │   T+30-60s: mensagens em-flight cobertas pelo reconciler C1
+```
+
+#### 11.4.4 Fluxo — Canal stateless (WABA, IG, MSG, TG)
+
+```
+(1) Cliente HTTP → Ingress → gw-1
+    │   gw-1 aplica: rate limit per-IP, auth (JWT), routing
+    │
+(2) gw-1 identifica tenant via JWT claim; valida RLS via RunInTenantTx
+    │   Qualquer pod gw-* pode atender (stateless). HPA escala gw-* por CPU/RPS.
+    │
+(3) gw-1 enfileira em outbound_events (mesma tx de business logic)
+    │   INSERT INTO outbound_events (...) VALUES (...)
+    │   (status='pending', scheduled_at=NULL or future, next_attempt_at=NULL)
+    │
+(4) rly-1 ou rly-2 compete por SKIP LOCKED → processa → sender.Send
+    │   Se WABA: HTTP POST graph.facebook.com/v18.0/<phone_id>/messages
+    │   Se TG: HTTP POST api.telegram.org/bot<token>/sendMessage
+    │   (qualquer pod rly-* pode processar; stateless)
+    │
+(5) Response → outbox.MarkSent ou MarkFailed (com #161 backoff)
+    │   Métricas + audit row
+```
+
+**Conclusão:** canais stateless **não precisam** de coordinator; só whatsmeow precisa.
+
+#### 11.4.5 Trade-offs aceitos
+
+**5 prós:**
+- ✓ Zero infra nova (Postgres já existe; advisory lock é built-in).
+- ✓ Mesma imagem Docker; mesmo Helm chart parametrizado.
+- ✓ Single-replica continua suportado (mode `role=all`); migração progressiva.
+- ✓ Canais stateless (4 dos 5) escalam **independentemente** do whatsmeow — HPA separado.
+- ✓ Failover automático em ≤ 60s (lease TTL); reconciler reduz para 30s.
+
+**5 contras:**
+- ✗ Postgres vira SPOF lógico (mitigado por replicação streaming + RPO ≤ 5s).
+- ✗ Latência de claim 1-5ms vs 0.1ms Redis (irrelevante para o caminho hot).
+- ✗ Coordinator adiciona ~1.800 LOC de código novo (Fase 10+).
+- ✗ Helm chart mais complexo (3 roles parametrizadas; não 1).
+- ✗ Debug cross-pod exige log aggregation (Loki/ELK) — não-incluso.
+
+**3 riscos residuais:**
+
+| Risco | Probabilidade | Impacto | Mitigação |
+|---|---|---|---|
+| **R-coord-1**: `pg_try_advisory_lock` tem comportamento indefinido em PGBouncer transaction-pooling | Média | Alto | Forçar `session` mode para conexões de coordinator; documentar em `deployments/helm/values.yaml` |
+| **R-coord-2**: Thundering herd de claim quando muitos pods disputam | Baixa | Médio | Backoff exponencial no `coordinator/claim.go` (mesma matemática do #161 jitter ±5s) |
+| **R-coord-3**: Heartbeat storm com 100 pods × 100 sessões × 1/20s = 500 qps no PG | Baixa | Médio | Batch heartbeat: `UPDATE ... WHERE worker_id = $1 AND session_key = ANY($2)` 1x/20s |
+
+### 11.5 Critério de aceitação da Seção 11 (DoD para Fase 10+)
+
+- [ ] Migration `0010_coordinator.up.sql` aplicável (capabilities + session_claims tables com RLS FORCE).
+- [ ] `internal/adapter/coordinator/{environment,registry,claim,lease,migrate,orphan}.go` implementados.
+- [ ] `pg_try_advisory_lock` coberto por `TestClaim_Contended` (10 goroutines, 1 vence).
+- [ ] `TestLease_Renewal` (heartbeat 3x, lock persiste); `TestLease_Lost` (PG disconnect simulado, lock liberado em ≤ 5s).
+- [ ] `TestOrphan_Detection` (worker simulado sem heartbeat 90s, reconciler marca orphan e libera).
+- [ ] `TestMigration_Graceful` (sessão migra de wmw-1 para wmw-2 sem perder mensagens; reconciler cobre o gap).
+- [ ] Métricas Prometheus 8/8 exportadas; 3/3 alertas válidos (`promtool check alerts`).
+- [ ] Helm chart com 3 roles parametrizadas; `helm template` verde.
+- [ ] Chaos test: kill -9 do whatsmeow-worker owner → sessão recupera em ≤ 90s.
+- [ ] Documentation: `docs/fase10/PLAN.md` (a ser criado) referencia esta seção como ponto de partida.
+
+---
+
+> **Última atualização:** junho/2026 (Seção 11 adicionada — análise de escalabilidade horizontal whatsmeow documentada, execução prevista para Fase 10+).
 > **Mantenedor:** Felipe D. Svit (mez-go-mono).
 > **Próxima revisão:** ao final de cada sprint, com checkmark nos DoD.

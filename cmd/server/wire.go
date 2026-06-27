@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -66,6 +67,7 @@ import (
 	ucreconcile "github.com/felipedsvit/mez-go-mono/internal/usecase/reconcile"
 	ucrouting "github.com/felipedsvit/mez-go-mono/internal/usecase/routing"
 	ucsecrets "github.com/felipedsvit/mez-go-mono/internal/usecase/secrets"
+	ucsettings "github.com/felipedsvit/mez-go-mono/internal/usecase/settings"
 	"github.com/felipedsvit/mez-go-mono/pkg/config"
 	"github.com/felipedsvit/mez-go-mono/pkg/health"
 	"github.com/felipedsvit/mez-go-mono/pkg/metrics"
@@ -190,19 +192,55 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	waStateR := postgres.NewWhatsAppStateRepo(appPool, platformPool)
 	waManager := whatsmeow.NewManager(whatsmeow.DefaultConfig(), waStateR, log)
 
-	// Fase 9 (#158): se MEZ_WHATSMEOW_ENABLED=true, injeta a factory real
-	// (sqlstore + device store). Caso contrário, Manager usa o stub
-	// (default). Aplica DeviceIdentity anti-ban antes do primeiro Connect.
-	if cfg.WhatsmeowEnabled && cfg.WhatsmeowDeviceDSN != "" {
-		identity := whatsmeow.IdentityFromConfig(cfg.WhatsmeowIdentityKind, cfg.WhatsmeowIdentityOS)
+	// Fase 10 (#177): app-level config via DB (system_settings) em vez
+	// de env vars. Seed dos defaults na primeira inicialização; lê
+	// whatsmeow.enabled/device_dsn/identity.kind/identity.os do DB.
+	settingsRepo := postgres.NewSystemSettingsRepo(appPool, platformPool)
+	settingsSvc := ucsettings.NewService(settingsRepo, ucsettings.NewEnvelopeSealer(localSealer.Envelope()), 1, log)
+	if err := settingsSvc.SeedDefaults(ctx, "system@boot"); err != nil {
+		log.Warn().Err(err).Msg("settings: seed defaults (continuando)")
+	}
+
+	// Watch hot-reload: o Manager re-aplica factory quando
+	// whatsmeow.enabled muda.
+	settingsCh, settingsCancel := settingsSvc.Watch()
+	go func() {
+		for ev := range settingsCh {
+			if !strings.HasPrefix(ev.Key, "whatsmeow.") {
+				continue
+			}
+			// Para simplificar: o re-apply é um restart do Manager
+			// (DisconnectAll + nova factory). Hot-reload real viria
+			// com sub-issue de reconnect por-tenant.
+			log.Info().Str("key", ev.Key).Str("actor", ev.UpdatedBy).Msg("settings: whatsmeow.* changed — restart required for full effect")
+		}
+	}()
+	defer settingsCancel()
+
+	// Lê whatsmeow.enabled + whatsmeow.device_dsn + identity do DB.
+	var whatsmeowEnabled bool
+	var whatsmeowDeviceDSN, whatsmeowIdentityKind, whatsmeowIdentityOS string
+	if err := settingsSvc.Get(ctx, "whatsmeow.enabled", &whatsmeowEnabled, false); err != nil {
+		log.Warn().Err(err).Msg("settings: get whatsmeow.enabled (default false)")
+	}
+	_ = settingsSvc.Get(ctx, "whatsmeow.device_dsn", &whatsmeowDeviceDSN, "")
+	_ = settingsSvc.Get(ctx, "whatsmeow.identity.kind", &whatsmeowIdentityKind, "chrome")
+	_ = settingsSvc.Get(ctx, "whatsmeow.identity.os", &whatsmeowIdentityOS, "Mac OS")
+
+	if whatsmeowEnabled && whatsmeowDeviceDSN != "" {
+		identity := whatsmeow.IdentityFromConfig(whatsmeowIdentityKind, whatsmeowIdentityOS)
 		waManager.SetClientFactory(identity, whatsmeow.NewRealClientFactory(whatsmeow.RealFactoryConfig{
-			DeviceDSN:  cfg.WhatsmeowDeviceDSN,
+			DeviceDSN:  whatsmeowDeviceDSN,
 			Transcoder: nil, // transcoder real é ffmpeg — wire em #158 follow-up
 			Log:        log,
 		}))
 		log.Info().
-			Str("device_dsn_host", redactedHost(cfg.WhatsmeowDeviceDSN)).
-			Msg("whatsmeow: real client factory enabled (Phase 9)")
+			Bool("enabled", whatsmeowEnabled).
+			Str("identity", whatsmeowIdentityKind).
+			Str("device_dsn_host", redactedHost(whatsmeowDeviceDSN)).
+			Msg("whatsmeow: real client factory enabled (Phase 9 + 10)")
+	} else {
+		log.Info().Bool("enabled", whatsmeowEnabled).Msg("whatsmeow: stub (default)")
 	}
 
 	senderRegistry := providerregistry.Build(keyring, log, providerregistry.BuildOpts{
@@ -337,6 +375,9 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	// senha no reset). Se backupSvc for nil, rotas de backup/reset não
 	// são registradas.
 	adminSrv.SetBackupService(backupSvc, loginSvc)
+	// Fase 10 (#177): system settings UI (substitui env vars app-level).
+	settingsH := adminweb.NewSettingsHandlers(settingsSvc, log)
+	adminSrv.SetSettingsHandlers(settingsH)
 	_ = adminmw.CSRF(adminmw.DefaultCSRFConfig())
 
 	// 16. HTTP server

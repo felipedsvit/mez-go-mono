@@ -51,6 +51,9 @@ type Server struct {
 	// se nil, rotas de backup/reset retornam 404.
 	backup   *ucbackup.Service
 	verifier ucbackup.AdminVerifier
+
+	// Fase 10 (#177): system settings (substitui env vars app-level).
+	settings *SettingsHandlers
 }
 
 func NewServer(
@@ -90,6 +93,12 @@ func NewServer(
 func (s *Server) SetBackupService(svc *ucbackup.Service, verifier ucbackup.AdminVerifier) {
 	s.backup = svc
 	s.verifier = verifier
+}
+
+// SetSettingsHandlers injeta o handler de system settings (Fase 10 #177).
+// Opcional — se não chamado, rotas /admin/settings não são registradas.
+func (s *Server) SetSettingsHandlers(h *SettingsHandlers) {
+	s.settings = h
 }
 
 func (s *Server) Router() chi.Router {
@@ -140,6 +149,14 @@ func (s *Server) Router() chi.Router {
 
 			r.Get("/tenants/{id}/reset", s.handleResetPage)
 			r.Post("/tenants/{id}/reset", s.handleResetStart)
+		}
+
+		// Fase 10 (#177): system settings UI (substitui env vars app-level).
+		if s.settings != nil {
+			r.Get("/settings", s.settings.listSettings)
+			r.Post("/settings", s.settings.postSetting)
+			r.Get("/settings/{key}", s.settings.jsonValue)
+			r.Post("/settings/{key}/delete", s.settings.deleteSetting)
 		}
 	})
 
