@@ -8,6 +8,11 @@
 // The tracker is in-memory (sync.Map). On restart, counters reset — this
 // is acceptable for a defense-in-depth layer; the DB lookup still gates
 // on the password hash.
+//
+// Issue #156 (M10 audit, DREAD 6.4): off-by-one. Docstring says
+// "5 fails / 15min" but código era \`count > maxFails\` (com
+// maxFails=5, lock no 6º). Corrigido para \`count >= maxFails\`
+// (lock no 5º, como documentado). CWE-307.
 package lockout
 
 import (
@@ -73,7 +78,9 @@ func (t *Tracker) RecordFailure(email string) bool {
 		return false
 	}
 	b.count++
-	return b.count > t.maxFails
+	// Issue #156 (M10): era \`> maxFails\` (lock no 6º). Corrigido para
+	// \`>= maxFails\` (lock no 5º, como documentado).
+	return b.count >= t.maxFails
 }
 
 // IsLockedOut returns true if email is currently locked. Read-only (no
@@ -97,7 +104,8 @@ func (t *Tracker) IsLockedOut(email string) bool {
 		delete(t.failures, email)
 		return false
 	}
-	return b.count > t.maxFails
+	// Issue #156 (M10): \`>= maxFails\` (consistente com RecordFailure).
+	return b.count >= t.maxFails
 }
 
 // RecordSuccess clears the failure counter for email (legitimate user
