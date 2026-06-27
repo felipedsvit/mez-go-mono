@@ -1,0 +1,31 @@
+{{define "content"}}
+<h1>Audit Log</h1>
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Time</th>
+                <th>Actor</th>
+                <th>Action</th>
+                <th>Target</th>
+                <th>Tenant</th>
+                <th>IP</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{range .Data}}
+            <tr>
+                <td>{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
+                <td>{{.ActorID}}</td>
+                <td>{{.Action}}</td>
+                <td>{{.TargetID}}</td>
+                <td>{{.TenantID}}</td>
+                <td>{{.IP}}</td>
+            </tr>
+            {{else}}
+            <tr><td colspan="6" class="text-center">No audit entries found</td></tr>
+            {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}

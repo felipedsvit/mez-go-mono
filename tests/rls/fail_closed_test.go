@@ -1,14 +1,20 @@
 //go:build integration
 
 // Package rls contains the fail-closed RLS regression test (issue #14,
-// C3/C4). It uses testcontainers to spin up a real Postgres 16, applies
-// migrations/0001_init.up.sql, creates the three roles (mez_migrate,
-// mez_app, mez_platform), and asserts that:
+// C3/C4 + Phase 1 admin tables). It uses testcontainers to spin up a real
+// Postgres 16, applies migrations/0001_init.up.sql + 0002_admin.up.sql,
+// creates the three roles (mez_migrate, mez_app, mez_platform), and asserts:
 //
-//   1. mez_app without mez.tenant_id CANNOT read messages (fail-closed).
-//   2. mez_app with mez.tenant_id=A can read A but not B (RLS filter, not error).
-//   3. mez_platform CAN read cross-tenant (BYPASSRLS, audited).
-//   4. mez_migrate (table owner) STILL has RLS enforced (FORCE RLS — C3).
+//  1. mez_app without mez.tenant_id CANNOT read messages (fail-closed).
+//  2. mez_app with mez.tenant_id=A can read A but not B (RLS filter, not error).
+//  3. mez_platform CAN read cross-tenant (BYPASSRLS, audited).
+//  4. mez_migrate (table owner) STILL has RLS enforced (FORCE RLS — C3).
+//  5. mez_app can SELECT admin_users (read access for LoginService) but
+//     CANNOT INSERT/UPDATE/DELETE (write blocked — only RunAsPlatform,
+//     which uses mez_platform, can write).
+//  6. mez_platform can write admin_users freely (BYPASSRLS).
+//  7. mez_app CAN insert into admin_audit_log (login failure audit) but
+//     CANNOT update/delete (append-only via REVOKE — defense in depth).
 //
 // Run:
 //
@@ -37,6 +43,7 @@ const (
 	pgImage          = "postgres:16-alpine"
 	migrationsDir    = "migrations"
 	migrationFile    = "0001_init.up.sql"
+	adminMigration   = "0002_admin.up.sql"
 	appPassword      = "mez_app_pwd"
 	migratePassword  = "mez_migrate_pwd"
 	platformPassword = "mez_platform_pwd"
@@ -179,28 +186,110 @@ func TestRLSFailClosed(t *testing.T) {
 		}
 		t.Logf("OK: mez_migrate without mez.tenant_id → %v", err)
 	})
+
+	// -------------------------------------------------------------------------
+	// Phase 1 — admin tables (0002_admin.up.sql)
+	// -------------------------------------------------------------------------
+
+	t.Run("MezApp_CanSelectAdminUsers", func(t *testing.T) {
+		// LoginService needs to look up users by email/id. The policy grants
+		// SELECT to mez_app so the lookup works. No tenant_id is required
+		// because admin_users is intentionally global (C5).
+		var n int
+		if err := appPool.QueryRow(ctx, `SELECT count(*) FROM admin_users`).Scan(&n); err != nil {
+			t.Fatalf("mez_app should be able to SELECT admin_users, got: %v", err)
+		}
+		t.Logf("OK: mez_app SELECT admin_users → %d rows", n)
+	})
+
+	t.Run("MezApp_CannotInsertAdminUsers", func(t *testing.T) {
+		// The policy `admin_users_write` is USING(false) WITH CHECK(false) for
+		// mez_app, so INSERT/UPDATE/DELETE must all fail. This is the C5
+		// safety net: mez_app can never create an admin user, only mez_platform
+		// (via RunAsPlatform) can.
+		_, err := appPool.Exec(ctx,
+			`INSERT INTO admin_users (email) VALUES ('attacker@example.com')`)
+		if err == nil {
+			t.Fatalf("mez_app should NOT be able to INSERT into admin_users")
+		}
+		t.Logf("OK: mez_app INSERT admin_users blocked → %v", err)
+	})
+
+	t.Run("MezApp_CannotUpdateAdminUsers", func(t *testing.T) {
+		_, err := appPool.Exec(ctx, `UPDATE admin_users SET name = 'hacked'`)
+		if err == nil {
+			t.Fatalf("mez_app should NOT be able to UPDATE admin_users")
+		}
+		t.Logf("OK: mez_app UPDATE admin_users blocked → %v", err)
+	})
+
+	t.Run("MezApp_CannotDeleteAdminUsers", func(t *testing.T) {
+		_, err := appPool.Exec(ctx, `DELETE FROM admin_users`)
+		if err == nil {
+			t.Fatalf("mez_app should NOT be able to DELETE from admin_users")
+		}
+		t.Logf("OK: mez_app DELETE admin_users blocked → %v", err)
+	})
+
+	t.Run("MezPlatform_CanWriteAdminUsers", func(t *testing.T) {
+		// mez_platform has BYPASSRLS — used by RunAsPlatform wrapper. Verifies
+		// that the control plane path is unblocked.
+		var id string
+		err := platformPool.QueryRow(ctx,
+			`INSERT INTO admin_users (email) VALUES ('rls-test@example.com') RETURNING id`).Scan(&id)
+		if err != nil {
+			t.Fatalf("mez_platform should be able to INSERT admin_users, got: %v", err)
+		}
+		if _, err := platformPool.Exec(ctx, `DELETE FROM admin_users WHERE email = 'rls-test@example.com'`); err != nil {
+			t.Fatalf("cleanup: %v", err)
+		}
+		t.Logf("OK: mez_platform INSERT/DELETE admin_users → id=%s", id)
+	})
+
+	t.Run("MezApp_CanInsertAuditLog_ButNotUpdateOrDelete", func(t *testing.T) {
+		// LoginService writes audit_log rows (login success/failure) using
+		// mez_app. Revoke UPDATE, DELETE ensures append-only.
+		_, err := appPool.Exec(ctx,
+			`INSERT INTO admin_audit_log (actor_email, action) VALUES ('test@x.com', 'auth.login.failure')`)
+		if err != nil {
+			t.Fatalf("mez_app should INSERT admin_audit_log, got: %v", err)
+		}
+		// UPDATE blocked
+		if _, err := appPool.Exec(ctx, `UPDATE admin_audit_log SET action = 'tampered'`); err == nil {
+			t.Errorf("mez_app should NOT UPDATE admin_audit_log (REVOKE)")
+		}
+		// DELETE blocked
+		if _, err := appPool.Exec(ctx, `DELETE FROM admin_audit_log`); err == nil {
+			t.Errorf("mez_app should NOT DELETE admin_audit_log (REVOKE)")
+		}
+		// Cleanup via superuser
+		_, _ = superPool.Exec(ctx, `DELETE FROM admin_audit_log WHERE actor_email = 'test@x.com'`)
+		t.Logf("OK: mez_app can INSERT but not UPDATE/DELETE admin_audit_log")
+	})
 }
 
 // ---- helpers -----------------------------------------------------------------
 
 func applyMigrations(ctx context.Context, pool *pgxpool.Pool) error {
-	candidates := []string{
-		filepath.Join("..", "..", migrationsDir, migrationFile),
-		filepath.Join(migrationsDir, migrationFile),
-	}
-	var rawSQL []byte
-	var err error
-	for _, p := range candidates {
-		rawSQL, err = os.ReadFile(p)
-		if err == nil {
-			break
+	for _, mf := range []string{migrationFile, adminMigration} {
+		candidates := []string{
+			filepath.Join("..", "..", migrationsDir, mf),
+			filepath.Join(migrationsDir, mf),
 		}
-	}
-	if err != nil {
-		return fmt.Errorf("read migration file (tried %v): %w", candidates, err)
-	}
-	if _, err := pool.Exec(ctx, string(rawSQL)); err != nil {
-		return fmt.Errorf("apply migration: %w", err)
+		var rawSQL []byte
+		var err error
+		for _, p := range candidates {
+			rawSQL, err = os.ReadFile(p)
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("read migration %s (tried %v): %w", mf, candidates, err)
+		}
+		if _, err := pool.Exec(ctx, string(rawSQL)); err != nil {
+			return fmt.Errorf("apply migration %s: %w", mf, err)
+		}
 	}
 	return nil
 }
