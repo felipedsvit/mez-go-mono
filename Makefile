@@ -1,4 +1,4 @@
-.PHONY: tools build test lint generate openapi-gen openapi-validate migrate-up migrate-down docker docker-compose-up tidy govulncheck rotate-kek templ-gen templ-check
+.PHONY: tools build test lint generate openapi-gen openapi-validate migrate-up migrate-down docker docker-compose-up tidy govulncheck rotate-kek templ-gen templ-check smoke
 
 GO ?= go
 BIN := mez-go-mono
@@ -139,3 +139,23 @@ rotate-kek:
 clean:
 	rm -rf bin/
 	$(GO) clean -cache
+
+# ==============================================================================
+# Smoke tests (require real Postgres — see scripts/smoke/README.md)
+# ==============================================================================
+
+# smoke roda os 3 smoke tests contra um Postgres local. Requer:
+#   - MEZ_MASTER_KEY no env (32 bytes base64)
+#   - Postgres acessível em localhost:5432 com mez_migrate/mez_app/mez_platform
+#   - Migrations aplicadas (make migrate-up)
+# Use scripts/smoke/README.md para subir o ambiente.
+smoke:
+	@if [ -z "$$MEZ_MASTER_KEY" ]; then echo "MEZ_MASTER_KEY required"; exit 1; fi
+	@echo "===== 1/3 system_settings repo ====="
+	$(GO) run ./scripts/smoke/system_settings
+	@echo
+	@echo "===== 2/3 settings_service end-to-end ====="
+	$(GO) run ./scripts/smoke/settings_service
+	@echo
+	@echo "===== 3/3 seed_defaults ====="
+	$(GO) run ./scripts/smoke/seed_defaults
