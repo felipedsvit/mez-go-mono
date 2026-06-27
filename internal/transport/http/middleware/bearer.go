@@ -3,7 +3,9 @@
 // BearerAuth valida JWT HS256, extrai tenant_id da claim "tenant_id" e
 // injeta no contexto (lido por api.TenantFromContext).
 //
-// NOTA Fase 2: implementação simplificada (HS256 com MEZ_API_JWT_SECRET).
+// Issue #130 (C2 audit, DREAD 8.4): valida \`exp\` e \`nbf\` rigorosamente.
+// Tokens sem \`exp\` (ou com \`exp=0\`, 1970) são rejeitados.
+//
 // A versão OIDC/JWKS chega na Fase 5.
 package middleware
 
@@ -13,8 +15,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -45,7 +49,7 @@ func BearerAuth(cfg BearerAuthConfig, log zerolog.Logger) func(http.Handler) htt
 				return
 			}
 
-			tenantID, err := parseAndValidateJWT(parts[1], cfg.Secret)
+			tenantID, claims, err := parseAndValidateJWT(parts[1], cfg.Secret)
 			if err != nil {
 				log.Warn().Err(err).Msg("bearer auth: invalid token")
 				http.Error(w, `{"error":"unauthorized","message":"invalid token"}`,
@@ -54,6 +58,14 @@ func BearerAuth(cfg BearerAuthConfig, log zerolog.Logger) func(http.Handler) htt
 			}
 
 			ctx := api.ContextWithTenant(r.Context(), tenantID)
+			// Issue #134 (C6 audit): injeta actor (sub/email) do JWT no
+			// contexto para que handlers de backup/restore/reset possam
+			// usar como Actor.ID/Actor.Email em audit logs (em vez do
+			// header X-Admin-Email controlável pelo atacante).
+			ctx = api.ContextWithActor(ctx, api.Actor{
+				ID:    claims.Sub,
+				Email: claims.Email,
+			})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -63,56 +75,91 @@ func BearerAuth(cfg BearerAuthConfig, log zerolog.Logger) func(http.Handler) htt
 type Claims struct {
 	TenantID string `json:"tenant_id"`
 	Sub      string `json:"sub,omitempty"`
+	Email    string `json:"email,omitempty"`
 	Exp      int64  `json:"exp,omitempty"`
+	Nbf      int64  `json:"nbf,omitempty"`
+	Iat      int64  `json:"iat,omitempty"`
+}
+
+// ParseResult contém o resultado de parseAndValidateJWT.
+type ParseResult struct {
+	TenantID domain.TenantID
+	Claims   Claims
 }
 
 // parseAndValidateJWT decodifica e valida um JWT HS256.
-func parseAndValidateJWT(token string, secret []byte) (domain.TenantID, error) {
+//
+// Validações:
+//   - alg == HS256 (rejeita alg=none, RS256, etc)
+//   - signature HMAC-SHA256
+//   - tenant_id claim não-vazio
+//   - exp claim presente e futuro (rejeita exp=0 / 1970)
+//   - nbf claim, se presente, não é futuro
+//   - iat sanity (não muito no futuro, ≤ 5min skew)
+func parseAndValidateJWT(token string, secret []byte) (domain.TenantID, *Claims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return "", errors.New("malformed jwt: expected 3 parts")
+		return "", nil, errors.New("malformed jwt: expected 3 parts")
 	}
 
 	// Header (não validamos tipo/alg em profundidade — assumimos HS256).
 	headerJSON, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return "", errors.New("malformed jwt: header decode")
+		return "", nil, errors.New("malformed jwt: header decode")
 	}
 	var header struct {
 		Alg string `json:"alg"`
 		Typ string `json:"typ"`
 	}
 	if err := json.Unmarshal(headerJSON, &header); err != nil {
-		return "", errors.New("malformed jwt: header parse")
+		return "", nil, errors.New("malformed jwt: header parse")
 	}
 	if header.Alg != "HS256" {
-		return "", errors.New("unsupported alg: " + header.Alg)
+		return "", nil, errors.New("unsupported alg: " + header.Alg)
 	}
 
 	// Signature.
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return "", errors.New("malformed jwt: signature decode")
+		return "", nil, errors.New("malformed jwt: signature decode")
 	}
 	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(parts[0] + "." + parts[1]))
 	if !hmac.Equal(sig, mac.Sum(nil)) {
-		return "", errors.New("invalid signature")
+		return "", nil, errors.New("invalid signature")
 	}
 
 	// Payload.
 	payloadJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return "", errors.New("malformed jwt: payload decode")
+		return "", nil, errors.New("malformed jwt: payload decode")
 	}
 	var claims Claims
 	if err := json.Unmarshal(payloadJSON, &claims); err != nil {
-		return "", errors.New("malformed jwt: payload parse")
+		return "", nil, errors.New("malformed jwt: payload parse")
 	}
 	if claims.TenantID == "" {
-		return "", errors.New("missing tenant_id claim")
+		return "", nil, errors.New("missing tenant_id claim")
 	}
-	return domain.TenantID(claims.TenantID), nil
+
+	// exp: obrigatório e futuro. Issue #130 (C2 audit).
+	now := time.Now().Unix()
+	if claims.Exp == 0 {
+		return "", nil, errors.New("missing exp claim")
+	}
+	if claims.Exp <= now {
+		return "", nil, fmt.Errorf("token expired (exp=%d, now=%d)", claims.Exp, now)
+	}
+	// nbf: se presente, não pode ser futuro (com skew de 60s).
+	if claims.Nbf > now+60 {
+		return "", nil, fmt.Errorf("token not yet valid (nbf=%d, now=%d)", claims.Nbf, now)
+	}
+	// iat sanity: se presente, não pode ser muito no futuro (clock skew).
+	if claims.Iat > 0 && claims.Iat > now+300 {
+		return "", nil, fmt.Errorf("iat too far in future (iat=%d, now=%d)", claims.Iat, now)
+	}
+
+	return domain.TenantID(claims.TenantID), &claims, nil
 }
 
 // RequireScope é um middleware RBAC simples: verifica se a claim "scope"

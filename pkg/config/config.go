@@ -101,10 +101,29 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// devAPISecretPlaceholder é o literal que o server.go usava como fallback
+// em dev. Bloqueado por ValidateServe: se alguém setar essa string
+// propositalmente, é fail-closed. Issue #130 (C2 audit) + #144 (H6).
+const devAPISecretPlaceholder = "dev-only-not-secure-replace-in-prod"
+
+// minAPISecretLen é o tamanho mínimo do MEZ_API_JWT_SECRET. 32 bytes =
+// 256 bits, compatível com HS256 (RFC 7518 §3.2). Abaixo disso é
+// brute-forcável em horas. Issue #144 (H6 audit, DREAD 5.0).
+const minAPISecretLen = 32
+
 // ValidateServe checks fields required only by the 'serve' subcommand.
+//
+// Issue #130 (C2) + #144 (H6): exige MEZ_API_JWT_SECRET com tamanho
+// mínimo de 32 bytes e rejeita o literal dev conhecido.
 func (c Config) ValidateServe() error {
 	if c.SessionSecret == "" {
 		return fmt.Errorf("MEZ_SESSION_SECRET is required for serve")
+	}
+	if len(c.APIJWTSecret) < minAPISecretLen {
+		return fmt.Errorf("MEZ_API_JWT_SECRET must be at least %d bytes (256 bits); got %d", minAPISecretLen, len(c.APIJWTSecret))
+	}
+	if c.APIJWTSecret == devAPISecretPlaceholder {
+		return fmt.Errorf("MEZ_API_JWT_SECRET is set to the dev placeholder literal; replace with a real secret (>= %d bytes)", minAPISecretLen)
 	}
 	return nil
 }

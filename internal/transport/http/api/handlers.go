@@ -31,7 +31,17 @@ import (
 
 type ctxKey string
 
-const tenantCtxKey ctxKey = "tenant_id"
+const (
+	tenantCtxKey ctxKey = "tenant_id"
+	actorCtxKey  ctxKey = "actor"
+)
+
+// Actor representa o principal autenticado para audit/authorize.
+// Issue #134 (C6 audit): preenchido a partir do JWT no BearerAuth.
+type Actor struct {
+	ID    string
+	Email string
+}
 
 // Handlers agrupa todos os handlers da API.
 type Handlers struct {
@@ -484,4 +494,22 @@ func TenantFromContext(ctx context.Context) (domain.TenantID, bool) {
 // e para o middleware BearerAuth.
 func ContextWithTenant(ctx context.Context, t domain.TenantID) context.Context {
 	return context.WithValue(ctx, tenantCtxKey, t)
+}
+
+// ActorFromContext extrai o actor (sub/email do JWT) do contexto.
+// Retorna (Actor{}, false) se não houver actor injetado (request
+// sem auth ou test sem o header). Issue #134 (C6 audit).
+func ActorFromContext(ctx context.Context) (Actor, bool) {
+	v := ctx.Value(actorCtxKey)
+	if v == nil {
+		return Actor{}, false
+	}
+	a, ok := v.(Actor)
+	return a, ok
+}
+
+// ContextWithActor injeta o actor no contexto. Helper para tests e
+// para o middleware BearerAuth. Issue #134.
+func ContextWithActor(ctx context.Context, a Actor) context.Context {
+	return context.WithValue(ctx, actorCtxKey, a)
 }

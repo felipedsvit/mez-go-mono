@@ -77,16 +77,13 @@ func New(svc Services) http.Handler {
 		r.Post("/webhooks/telegram/{tenant_id}", svc.TelegramHandler.ServeHTTP)
 	}
 
-	// API REST (com Bearer JWT).
-	jwtSecret := svc.JWTSecret
-	if len(jwtSecret) == 0 {
-		// fallback: usa um secret dummy para que o middleware não panique.
-		// Em produção, ValidateServe deve garantir que MEZ_API_JWT_SECRET
-		// está setado.
-		jwtSecret = []byte("dev-only-not-secure-replace-in-prod")
-		svc.Log.Warn().Msg("MEZ_API_JWT_SECRET not set; using dev placeholder")
+	// API REST (com Bearer JWT). Issue #130 (C2 audit): fail-closed —
+	// secret vazio é defense-in-depth. ValidateServe já rejeita antes
+	// de chegar aqui; se chegar, panic é apropriado (bug de wiring).
+	if len(svc.JWTSecret) == 0 {
+		panic("mez.http.server: MEZ_API_JWT_SECRET is empty; check ValidateServe")
 	}
-	apiMw := apimw.BearerAuth(apimw.BearerAuthConfig{Secret: jwtSecret}, svc.Log)
+	apiMw := apimw.BearerAuth(apimw.BearerAuthConfig{Secret: svc.JWTSecret}, svc.Log)
 
 	apiH := api.New(svc.Log, svc.ConvRepo, svc.MsgRepo, svc.TenantRepo, svc.SenderService, svc.SenderRegistry, svc.QRCodeProvider)
 	var backupH *api.BackupHandlers
