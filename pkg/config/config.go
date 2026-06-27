@@ -2,8 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -88,11 +86,13 @@ func Load() (Config, error) {
 	mk := cfg.MasterKey
 	mkf := cfg.MasterKeyFile
 	if mk == "" && mkf != "" {
-		data, err := os.ReadFile(mkf)
+		// Issue #141 (H3 audit): permission 0600 + no-symlink
+		// enforced by ReadKeyFile. KEK = root of envelope encryption.
+		data, err := ReadKeyFile(mkf)
 		if err != nil {
 			return cfg, fmt.Errorf("read master key file: %w", err)
 		}
-		cfg.MasterKey = strings.TrimSpace(string(data))
+		cfg.MasterKey = data
 	}
 	if cfg.MasterKey == "" {
 		return cfg, fmt.Errorf("MEZ_MASTER_KEY or MEZ_MASTER_KEY_FILE is required")
