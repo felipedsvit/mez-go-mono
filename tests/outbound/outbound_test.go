@@ -152,8 +152,19 @@ func (r *fakeRegistry) Health(_ context.Context, _ domain.TenantID) map[domain.C
 type okSender struct{ id string }
 
 func (o *okSender) Send(_ context.Context, _ port.OutboundRequest) (string, error) { return o.id, nil }
-func (o *okSender) Capabilities() port.CapabilitySet                               { return port.CapabilitiesWABA() }
-func (o *okSender) Channel() domain.Channel                                        { return domain.ChannelWABA }
+func (o *okSender) Capabilities() port.CapabilitySet {
+	// Capabilities da WABA (issue #120 — movido de port para adapter).
+	// Aqui usamos um set literal para não importar adapter em teste.
+	return port.CapabilitySet{
+		port.CapText:      true,
+		port.CapMedia:     true,
+		port.CapReactions: true,
+		port.CapDelete:    true,
+		port.CapTemplates: true,
+		port.CapMarkRead:  true,
+	}
+}
+func (o *okSender) Channel() domain.Channel { return domain.ChannelWABA }
 
 type errSender struct{}
 
