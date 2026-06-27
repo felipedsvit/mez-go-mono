@@ -1,0 +1,7 @@
+all-globally: false
+# Disable secret detection for test files — they contain known fixture
+# passwords (testcontainers defaults) that are not real secrets.
+tests:
+  ignore:
+    - "**/*_test.go"
+    - "tests/**"
