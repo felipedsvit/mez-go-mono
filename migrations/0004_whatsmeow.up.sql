@@ -116,8 +116,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON whatsapp_account_state TO mez_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON whatsapp_session_keys  TO mez_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON whatsapp_history       TO mez_app;
 
-GRANT SELECT, UPDATE                ON whatsapp_account_state TO mez_platform;
-GRANT SELECT, UPDATE                ON whatsapp_session_keys  TO mez_platform;
-GRANT SELECT, UPDATE                ON whatsapp_history       TO mez_platform;
+-- Fase 6 (#83): mez_platform precisa de DELETE para o reset por tenant.
+-- O reset usa mez_platform (BYPASSRLS) porque as tabelas whatsmeow são
+-- cross-tenant e RLS fail-closed bloquearia a operação a partir de mez_app.
+GRANT SELECT, INSERT, UPDATE, DELETE ON whatsapp_account_state TO mez_platform;
+GRANT SELECT, INSERT, UPDATE, DELETE ON whatsapp_session_keys  TO mez_platform;
+GRANT SELECT, INSERT, UPDATE, DELETE ON whatsapp_history       TO mez_platform;
 
 COMMIT;

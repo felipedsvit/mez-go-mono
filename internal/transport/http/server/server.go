@@ -20,6 +20,7 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 	"github.com/felipedsvit/mez-go-mono/internal/transport/http/api"
 	apimw "github.com/felipedsvit/mez-go-mono/internal/transport/http/middleware"
+	ucbackup "github.com/felipedsvit/mez-go-mono/internal/usecase/backup"
 	ucmessaging "github.com/felipedsvit/mez-go-mono/internal/usecase/messaging"
 	"github.com/felipedsvit/mez-go-mono/pkg/health"
 	"github.com/felipedsvit/mez-go-mono/pkg/metrics"
@@ -46,6 +47,10 @@ type Services struct {
 	SenderService   *ucmessaging.SenderService
 	SenderRegistry  port.SenderRegistry
 	QRCodeProvider  api.QRCodeProvider
+	// Fase 6: backup service e admin verifier (para reset) — opcionais;
+	// se nil, os endpoints de backup retornam 503.
+	BackupService   *ucbackup.Service
+	AdminVerifier   ucbackup.AdminVerifier
 }
 
 // New cria o http.Handler com todas as rotas montadas.
@@ -84,9 +89,16 @@ func New(svc Services) http.Handler {
 	apiMw := apimw.BearerAuth(apimw.BearerAuthConfig{Secret: jwtSecret}, svc.Log)
 
 	apiH := api.New(svc.Log, svc.ConvRepo, svc.MsgRepo, svc.TenantRepo, svc.SenderService, svc.SenderRegistry, svc.QRCodeProvider)
+	var backupH *api.BackupHandlers
+	if svc.BackupService != nil {
+		backupH = api.NewBackupHandlers(svc.BackupService, svc.AdminVerifier)
+	}
 	r.Route("/api", func(r chi.Router) {
 		r.Use(apiMw)
 		apiH.Register(r)
+		if backupH != nil {
+			backupH.Register(r)
+		}
 	})
 
 	// Admin (do Fase 1).

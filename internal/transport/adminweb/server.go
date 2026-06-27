@@ -14,7 +14,8 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/middleware/ratelimit"
 	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/render"
 	ucadmin "github.com/felipedsvit/mez-go-mono/internal/usecase/admin"
-	"github.com/felipedsvit/mez-go-mono/internal/usecase/auth"
+	ucauth "github.com/felipedsvit/mez-go-mono/internal/usecase/auth"
+	ucbackup "github.com/felipedsvit/mez-go-mono/internal/usecase/backup"
 	"github.com/felipedsvit/mez-go-mono/pkg/health"
 )
 
@@ -25,8 +26,8 @@ type Server struct {
 	health  *health.Checker
 	version string
 
-	login        *auth.LoginService
-	logout       *auth.LogoutService
+	login        *ucauth.LoginService
+	logout       *ucauth.LogoutService
 	sessionCfg   middleware.SessionConfig
 	stateStore   cdomain.StateStore
 	idp          cdomain.IdP
@@ -36,14 +37,19 @@ type Server struct {
 	users   ucadmin.UserUseCase
 	roles   ucadmin.RoleUseCase
 	audit   ucadmin.AuditQueryUseCase
+
+	// Fase 6: backup service + admin verifier (para reset). Opcional —
+	// se nil, rotas de backup/reset retornam 404.
+	backup   *ucbackup.Service
+	verifier ucbackup.AdminVerifier
 }
 
 func NewServer(
 	log zerolog.Logger,
 	health *health.Checker,
 	version string,
-	login *auth.LoginService,
-	logout *auth.LogoutService,
+	login *ucauth.LoginService,
+	logout *ucauth.LogoutService,
 	sessionCfg middleware.SessionConfig,
 	stateStore cdomain.StateStore,
 	idp cdomain.IdP,
@@ -90,6 +96,13 @@ func NewServer(
 	}
 }
 
+// SetBackupService injeta o backup service (Fase 6). Opcional — se não
+// chamado, rotas de backup/reset não são registradas.
+func (s *Server) SetBackupService(svc *ucbackup.Service, verifier ucbackup.AdminVerifier) {
+	s.backup = svc
+	s.verifier = verifier
+}
+
 func (s *Server) Router() chi.Router {
 	r := chi.NewRouter()
 
@@ -107,6 +120,9 @@ func (s *Server) Router() chi.Router {
 
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.RequireAuth("/admin/login"))
+		// Fase 6 (#85, D16): CSRF middleware em todas as rotas autenticadas.
+		// /login fica fora deste grupo (não precisa de CSRF no login).
+		r.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
 
 		r.Get("/", s.handleDashboard)
 		r.Get("/tenants", s.handleTenantsList)
@@ -124,6 +140,18 @@ func (s *Server) Router() chi.Router {
 		r.Post("/roles/{id}/permissions", s.handleRolePermissions)
 
 		r.Get("/audit", s.handleAuditList)
+
+		// Fase 6: backup/restore/reset UI (#86, #87).
+		if s.backup != nil {
+			r.Get("/tenants/{id}/backup", s.handleBackupPage)
+			r.Post("/tenants/{id}/backup", s.handleBackupStart)
+			r.Get("/tenants/{id}/backup/status", s.handleBackupStatus)
+			r.Get("/tenants/{id}/backup/list", s.handleBackupList)
+			r.Post("/tenants/{id}/restore", s.handleRestoreStart)
+
+			r.Get("/tenants/{id}/reset", s.handleResetPage)
+			r.Post("/tenants/{id}/reset", s.handleResetStart)
+		}
 	})
 
 	return r

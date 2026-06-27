@@ -8,13 +8,16 @@
 //  5. Repos
 //  6. Bus
 //  7. Ingestor + Router
-//  8. OutboxRepo + SenderRegistry + Relay (Fase 3)
+//  8. OutboxRepo + SenderRegistry + Relay
 //  9. InboundEventsRepo + Reconciler
-//
 // 10. SenderService + StatusConsumer
-// 11. Webhook handlers (Meta + Telegram)
-// 12. API handlers
-// 13. HTTP server
+// 11. Whatsmeow Manager
+// 12. Webhook handlers (Meta + Telegram)
+// 13. S3 store (Fase 6)
+// 14. Backup Service (Fase 6)
+// 15. Admin DB + adminweb.Server (Fase 1) + CSRF middleware (Fase 6)
+// 16. API handlers
+// 17. HTTP server (com adminweb montado em /admin)
 //
 // Graceful shutdown (D10 + C12): signal → HTTP Shutdown → bus Drain →
 // relay Flush → reconciler Stop → pools close.
@@ -32,17 +35,27 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
 
+	"github.com/felipedsvit/mez-go-mono/internal/adapter/auth/argon2"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/broker"
+	memcache "github.com/felipedsvit/mez-go-mono/internal/adapter/cache/memory"
 	providerregistry "github.com/felipedsvit/mez-go-mono/internal/adapter/provider/registry"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/whatsmeow"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres"
+	adminrepo "github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres/admin"
+	s3store "github.com/felipedsvit/mez-go-mono/internal/adapter/storage/s3"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/meta"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/secrets"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/telegram"
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 	"github.com/felipedsvit/mez-go-mono/internal/core/event"
 	"github.com/felipedsvit/mez-go-mono/internal/core/port"
+	adminweb "github.com/felipedsvit/mez-go-mono/internal/transport/adminweb"
+	adminmw "github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/middleware"
+	"github.com/felipedsvit/mez-go-mono/internal/transport/adminweb/middleware/ratelimit"
 	httpserver "github.com/felipedsvit/mez-go-mono/internal/transport/http/server"
+	ucadmin "github.com/felipedsvit/mez-go-mono/internal/usecase/admin"
+	ucauth "github.com/felipedsvit/mez-go-mono/internal/usecase/auth"
+	ucbackup "github.com/felipedsvit/mez-go-mono/internal/usecase/backup"
 	ucmessaging "github.com/felipedsvit/mez-go-mono/internal/usecase/messaging"
 	ucoutbox "github.com/felipedsvit/mez-go-mono/internal/usecase/outbox"
 	ucreconcile "github.com/felipedsvit/mez-go-mono/internal/usecase/reconcile"
@@ -80,6 +93,14 @@ type AppContext struct {
 	Relay      *ucoutbox.Relay
 	Reconciler *ucreconcile.Reconciler
 
+	// Fase 6: backup/restore/reset
+	BackupService *ucbackup.Service
+	Store         *s3store.Store
+	AdminVerifier ucbackup.AdminVerifier
+
+	// Admin (Fase 1) + S3 helpers
+	AdminServer *adminweb.Server
+
 	// Webhook handlers
 	MetaHandler     *meta.Handler
 	TelegramHandler *telegram.Handler
@@ -89,7 +110,6 @@ type AppContext struct {
 }
 
 // wireServices monta toda a árvore de dependências.
-// Retorna erro fatal se algo essencial faltar (ex: secret JWT).
 func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*AppContext, error) {
 	// 3. DB pools
 	appPool, err := postgres.ConnectPool(ctx, cfg.DatabaseURL, 20)
@@ -128,24 +148,17 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	)
 	routerSvc := ucrouting.NewRouter(log)
 
-	// Routing consumer: subscreve inbound e marca como routed.
 	bus.SubscribeInbound(func(evt event.InboundEvent) {
-		// Re-fetch da mensagem via repositórios; aqui simplificamos
-		// emitindo um routing no-op. O Reconciler (#39) cobre a fila
-		// "received" com FOR UPDATE SKIP LOCKED, e este consumer é
-		// o caminho fast para a Fase 2.
 		log.Debug().
 			Str("tenant", evt.TenantID).
 			Str("channel", string(evt.Channel)).
 			Str("message", evt.MessageID).
 			Msg("bus: routing consumer (fase 2: noop)")
-		// TODO Fase 3/5: chamar router.Assign + msgRepo.MarkRouted.
-		// Para Fase 2, o Reconciler cobre o caso. Aqui só logamos.
 		_ = evt
 		_ = routerSvc
 	})
 
-	// 8. Sender pipeline (Fase 3+4): credentials + registry + service + relay.
+	// 8. Sender pipeline
 	creds, err := secrets.NewEnvCredentials()
 	if err != nil {
 		return nil, fmt.Errorf("load credentials: %w", err)
@@ -157,12 +170,53 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	resolver.Register(domain.ChannelTGBot, port.CapabilitiesTelegram())
 	resolver.Register(domain.ChannelWAWeb, port.CapabilitiesWhatsMeow())
 
-	// Fase 4: Manager whatsmeow (1 client/tenant, lazy init).
+	// 11. Whatsmeow Manager (1 client/tenant, lazy init).
 	waStateR := postgres.NewWhatsAppStateRepo(appPool, platformPool)
 	waManager := whatsmeow.NewManager(whatsmeow.DefaultConfig(), waStateR, log)
 
 	senderRegistry := providerregistry.Build(creds, log, providerregistry.BuildOpts{
 		Whatsmeow: &providerregistry.WhatsmeowDeps{Manager: waManager},
+	})
+
+	// 13. S3 store (Fase 6)
+	store, err := s3store.New(ctx, log, s3store.Config{
+		Endpoint:     cfg.S3Endpoint,
+		AccessKey:    cfg.S3AccessKey,
+		SecretKey:    cfg.S3SecretKey,
+		Bucket:       cfg.S3Bucket,
+		BackupBucket: cfg.S3BackupBucket,
+		UseSSL:       false,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("s3 store: %w", err)
+	}
+
+	// 14. Backup service (Fase 6)
+	backupJobs := ucbackup.NewJobStore(time.Hour)
+	backupJobs.StartJanitor(ctx, 10*time.Minute)
+
+	// Admin pool (Fase 1) + audit repo — conecta aqui para que backup
+	// possa registrar audit logs no mesmo pool.
+	adminDSN := cfg.AdminDBURL
+	if adminDSN == "" {
+		adminDSN = cfg.PlatformDBURL
+	}
+	adminDB, err := adminrepo.NewDB(ctx, adminDSN)
+	if err != nil {
+		return nil, fmt.Errorf("admin db: %w", err)
+	}
+	adminRepos := adminrepo.NewRepositories(adminDB)
+
+	backupSvc := ucbackup.New(ucbackup.Options{
+		Logger:       log,
+		TxRunner:     txRunner,
+		Store:        store,
+		PGXPool:      appPool,
+		PlatformPool: platformPool,
+		Jobs:         backupJobs,
+		Audit:        adminRepos.Audit,
+		Version:      "0.6.0-fase6",
+		Disconnector: waManager,
 	})
 
 	pollInterval, err := time.ParseDuration(cfg.OutboxPollInterval)
@@ -196,7 +250,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		log,
 	)
 
-	// 10. Webhook handlers.
+	// 12. Webhook handlers.
 	metaSecrets, err := secrets.NewEnvMetaSecrets()
 	if err != nil {
 		return nil, fmt.Errorf("load meta secrets: %w", err)
@@ -211,7 +265,48 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		return appPool.Ping(ctx)
 	})
 
-	// 12. HTTP server
+	// 15. Admin services (Fase 1) + adminweb server (Fase 1+6)
+	sessionTTL, _ := time.ParseDuration(cfg.SessionTTL)
+	if sessionTTL == 0 {
+		sessionTTL = 24 * time.Hour
+	}
+	hasher := argon2.New(argon2.DefaultParams())
+	sessionStore := memcache.NewSessionStore(nil)
+	sessionStore.StartReaper(context.Background(), 5*time.Minute)
+
+	loginSvc := ucauth.NewLoginService(
+		adminRepos.Users, adminRepos.Roles,
+		sessionStore, adminRepos.Audit, hasher,
+		nil, sessionStore, nil,
+		sessionTTL, false,
+	)
+	logoutSvc := ucauth.NewLogoutService(sessionStore, adminRepos.Audit)
+	sessionSvc := ucauth.NewSessionService(sessionStore, adminRepos.Users, sessionTTL)
+
+	tenantUC := ucadmin.NewTenantService(adminRepos.Tenants, adminRepos.Audit)
+	userUC := ucadmin.NewUserService(adminRepos.Users, adminRepos.Roles, adminRepos.Audit, hasher)
+	roleUC := ucadmin.NewRoleService(adminRepos.Roles, adminRepos.Audit)
+	auditUC := ucadmin.NewAuditQueryService(adminRepos.Audit)
+
+	adminSrv := adminweb.NewServer(
+		log, hc, "0.6.0-fase6",
+		loginSvc, logoutSvc,
+		adminmw.SessionConfig{
+			Resolver: sessionSvc,
+			Cookie:   "__Host-mez_admin",
+			TTL:      sessionTTL,
+		},
+		sessionStore, nil,
+		ratelimit.New(10.0/60.0, 10.0),
+		tenantUC, userUC, roleUC, auditUC,
+	)
+	// Fase 6: injeta backup service e admin verifier (usado para confirmar
+	// senha no reset). Se backupSvc for nil, rotas de backup/reset não
+	// são registradas.
+	adminSrv.SetBackupService(backupSvc, loginSvc)
+	_ = adminmw.CSRF(adminmw.DefaultCSRFConfig())
+
+	// 16. HTTP server
 	jwtSecret := []byte(cfg.APIJWTSecret)
 	handler := httpserver.New(httpserver.Services{
 		Log:             log,
@@ -222,11 +317,13 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		TenantRepo:      tenantRepo,
 		MetaHandler:     metaH,
 		TelegramHandler: tgH,
-		AdminRouter:     nil, // adminweb é montado separado em main
+		AdminRouter:     adminSrv.Router(), // Fase 6: montado em /admin
 		JWTSecret:       jwtSecret,
 		SenderService:   senderSvc,
 		SenderRegistry:  senderRegistry,
-		QRCodeProvider:  waManager, // Fase 4: Manager implementa CurrentQR
+		QRCodeProvider:  waManager,
+		BackupService:   backupSvc,
+		AdminVerifier:   loginSvc, // Reset usa LoginLocal para confirmar senha
 	})
 	srv := &http.Server{
 		Addr:         cfg.HTTPAddr,
@@ -243,6 +340,8 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		SenderRegistry: senderRegistry, SenderService: senderSvc,
 		StatusConsumer: statusConsumer, Credentials: creds,
 		Ingestor: ingestor, Router: routerSvc, Relay: relay, Reconciler: reconciler,
+		BackupService: backupSvc, Store: store, AdminVerifier: loginSvc,
+		AdminServer: adminSrv,
 		MetaHandler: metaH, TelegramHandler: tgH, HTTPServer: srv,
 	}, nil
 }
@@ -276,7 +375,6 @@ func runWithGracefulShutdown(ctx context.Context, app *AppContext) error {
 		}
 	}()
 
-	// Espera sinal ou erro fatal.
 	select {
 	case sig := <-sigCh:
 		app.Log.Info().Str("signal", sig.String()).Msg("shutdown: signal received")
@@ -284,27 +382,20 @@ func runWithGracefulShutdown(ctx context.Context, app *AppContext) error {
 		app.Log.Error().Err(err).Msg("shutdown: fatal error")
 	}
 
-	// Shutdown coordenado (C12).
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// 1. Para de aceitar HTTP.
 	if err := app.HTTPServer.Shutdown(shutdownCtx); err != nil {
 		app.Log.Error().Err(err).Msg("http shutdown")
 	}
-	// 2. Bus drain.
 	if err := app.Bus.Drain(shutdownCtx); err != nil {
 		app.Log.Error().Err(err).Msg("bus drain")
 	}
-	// 3. Relay stop.
 	app.Relay.Stop()
-	// 4. Reconciler stop.
 	app.Reconciler.Stop()
 
-	// 5. Aguarda goroutines terminarem.
 	done := make(chan struct{})
 	go func() {
-		// espera que tudo finalize graciosamente
 		app.Log.Info().Msg("shutdown: complete")
 		close(done)
 	}()
@@ -317,5 +408,4 @@ func runWithGracefulShutdown(ctx context.Context, app *AppContext) error {
 	return nil
 }
 
-// chi.NewRouter é exposto para casos de teste ou extensão futura.
 var _ = chi.NewRouter

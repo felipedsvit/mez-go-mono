@@ -33,6 +33,42 @@ func appQFromCtx(ctx context.Context, pool *pgxpool.Pool) querier {
 	return pool
 }
 
+// TxOption configura uma transação aberta por RunInTenantTx/BeginTenantTx.
+// Pattern: functional options (Fase 0 — portado de mez-go).
+type TxOption func(*txCfg)
+
+type txCfg struct {
+	isolation  pgx.TxIsoLevel
+	deferAll   bool // SET CONSTRAINTS ALL DEFERRED (C6 — restore topológico)
+}
+
+func (c *txCfg) apply(opts []TxOption) {
+	for _, o := range opts {
+		o(c)
+	}
+}
+
+// WithIsolation sobrescreve o isolation level (default ReadCommitted).
+// Use WithRepeatableRead para backups (#81) — snapshot consistente do tenant.
+func WithIsolation(level pgx.TxIsoLevel) TxOption {
+	return func(c *txCfg) { c.isolation = level }
+}
+
+// WithRepeatableRead é um atalho para WithIsolation(RepeatableRead).
+// Necessário no export (#81) para que o NDJSON seja gerado contra um
+// snapshot consistente mesmo se houver writes concorrentes no tenant.
+func WithRepeatableRead() TxOption {
+	return WithIsolation(pgx.RepeatableRead)
+}
+
+// WithDeferConstraints adia a validação de FKs para o COMMIT (C6).
+// Necessário no restore (#82) porque as tabelas filhas são inseridas antes
+// das pais (ordem topológica reversa: contacts → conversations → messages).
+// Só funciona se a FK foi criada DEFERRABLE INITIALLY DEFERRED — 0003 já fez.
+func WithDeferConstraints() TxOption {
+	return func(c *txCfg) { c.deferAll = true }
+}
+
 type TxRunner struct {
 	appPool      *pgxpool.Pool
 	platformPool *pgxpool.Pool
@@ -47,8 +83,19 @@ func NewTxRunner(appPool, platformPool *pgxpool.Pool, log zerolog.Logger) *TxRun
 	}
 }
 
+// RunInTenantTx abre tx com defaults (ReadCommitted, sem defer).
+// Preservado para não quebrar callers existentes.
 func (r *TxRunner) RunInTenantTx(ctx context.Context, tenantID domain.TenantID, fn func(ctx context.Context) error) error {
-	tx, err := r.appPool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	return r.RunInTenantTxWithOpts(ctx, tenantID, fn)
+}
+
+// RunInTenantTxWithOpts é a versão configurável (#81/#82 usam).
+// Aceita WithRepeatableRead, WithDeferConstraints, etc.
+func (r *TxRunner) RunInTenantTxWithOpts(ctx context.Context, tenantID domain.TenantID, fn func(ctx context.Context) error, opts ...TxOption) error {
+	cfg := txCfg{isolation: pgx.ReadCommitted}
+	cfg.apply(opts)
+
+	tx, err := r.appPool.BeginTx(ctx, pgx.TxOptions{IsoLevel: cfg.isolation})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
@@ -57,12 +104,43 @@ func (r *TxRunner) RunInTenantTx(ctx context.Context, tenantID domain.TenantID, 
 	if _, err := tx.Exec(ctx, "SELECT set_config('mez.tenant_id', $1, true)", string(tenantID)); err != nil {
 		return fmt.Errorf("set tenant_id: %w", err)
 	}
+	if cfg.deferAll {
+		if _, err := tx.Exec(ctx, "SET CONSTRAINTS ALL DEFERRED"); err != nil {
+			return fmt.Errorf("defer constraints: %w", err)
+		}
+	}
 
 	ctx = context.WithValue(ctx, appTxKey, tx)
 	if err := fn(ctx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// BeginTenantTx abre uma tx e devolve para o caller gerenciar. Usado por
+// use cases que precisam de múltiplas operações sequenciais sem callback
+// (ex.: export NDJSON com controle de stream). O caller é responsável por
+// Commit/Rollback e por setar mez.tenant_id via SET LOCAL se quiser
+// reutilizar appQFromCtx.
+func (r *TxRunner) BeginTenantTx(ctx context.Context, tenantID domain.TenantID, opts ...TxOption) (pgx.Tx, context.Context, error) {
+	cfg := txCfg{isolation: pgx.ReadCommitted}
+	cfg.apply(opts)
+
+	tx, err := r.appPool.BeginTx(ctx, pgx.TxOptions{IsoLevel: cfg.isolation})
+	if err != nil {
+		return nil, ctx, fmt.Errorf("begin tx: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('mez.tenant_id', $1, true)", string(tenantID)); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, ctx, fmt.Errorf("set tenant_id: %w", err)
+	}
+	if cfg.deferAll {
+		if _, err := tx.Exec(ctx, "SET CONSTRAINTS ALL DEFERRED"); err != nil {
+			_ = tx.Rollback(ctx)
+			return nil, ctx, fmt.Errorf("defer constraints: %w", err)
+		}
+	}
+	return tx, context.WithValue(ctx, appTxKey, tx), nil
 }
 
 func (r *TxRunner) RunAsPlatform(ctx context.Context, actor string, fn func(ctx context.Context) error) error {

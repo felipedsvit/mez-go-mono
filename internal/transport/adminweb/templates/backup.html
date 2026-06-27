@@ -1,0 +1,56 @@
+{{define "content"}}
+<h1>Backup — Tenant {{.Data.TenantID}}</h1>
+
+{{if eq .Success "ok"}}
+<div class="success">Reset concluído. Tenant zerado.</div>
+{{end}}
+
+<div class="card">
+    <h2>Iniciar novo backup</h2>
+    <p>O backup é executado em background (snapshot REPEATABLE READ do tenant + upload NDJSON para S3).</p>
+    <form method="POST" action="/admin/tenants/{{.Data.TenantID}}/backup">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <button type="submit" class="btn btn-primary">Iniciar backup agora</button>
+    </form>
+</div>
+
+{{if .Data.Backups}}
+<div class="card">
+    <h2>Backups existentes</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Backup ID</th>
+                <th>Created</th>
+                <th>Actor</th>
+                <th>Tables</th>
+                <th>Ações</th>
+            </tr>
+        </thead>
+        <tbody>
+        {{range .Data.Backups}}
+            <tr>
+                <td><code>{{.BackupID}}</code></td>
+                <td>{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+                <td>{{.Actor}}</td>
+                <td>{{.TablesDone}}</td>
+                <td>
+                    <form method="POST" action="/admin/tenants/{{$.Data.TenantID}}/restore" style="display:inline">
+                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                        <input type="hidden" name="backup_id" value="{{.BackupID}}">
+                        <button type="submit" class="btn btn-sm" onclick="return confirm('Restaurar este backup substituirá os dados atuais. Continuar?')">Restaurar</button>
+                    </form>
+                </td>
+            </tr>
+        {{end}}
+        </tbody>
+    </table>
+</div>
+{{end}}
+
+<div class="card" style="border-left: 4px solid #e74c3c">
+    <h2>Zona de perigo</h2>
+    <p>Para <strong>apagar todos os dados</strong> deste tenant (mensagens, contatos, mídia S3, sessão WhatsApp), vá para a página de reset.</p>
+    <a href="/admin/tenants/{{.Data.TenantID}}/reset" class="btn btn-danger">Ir para reset</a>
+</div>
+{{end}}
