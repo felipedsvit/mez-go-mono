@@ -2,6 +2,10 @@
 //
 // Wire: \`/app/ws\` → upgrader.Upgrade → NewSubscriber → hub.Subscribe.
 // ReadPump + WritePump rodando em goroutines separadas.
+//
+// O upgrader é injetado (issue #129 — C1 audit): CheckOrigin deve ser
+// config-driven. Use NewUpgrader(UpgraderConfig{...}) em wire.go e
+// passe via NewHandler.
 package websocket
 
 import (
@@ -9,6 +13,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog"
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
@@ -17,14 +22,22 @@ import (
 // Handler é o handler HTTP para o upgrade WS.
 type Handler struct {
 	hub           *Hub
+	upgrader      *websocket.Upgrader
 	tenantFromCtx func(context.Context) (domain.TenantID, bool)
 	log           zerolog.Logger
 }
 
 // NewHandler cria o handler.
-func NewHandler(hub *Hub, tenantFromCtx func(context.Context) (domain.TenantID, bool), log zerolog.Logger) *Handler {
+//
+// upgrader: factory NewUpgrader(UpgraderConfig) com allowlist de origens.
+//           Se nil, usa DefaultUpgrader() (permissivo, dev only).
+func NewHandler(hub *Hub, upgrader *websocket.Upgrader, tenantFromCtx func(context.Context) (domain.TenantID, bool), log zerolog.Logger) *Handler {
+	if upgrader == nil {
+		upgrader = DefaultUpgrader()
+	}
 	return &Handler{
 		hub:           hub,
+		upgrader:      upgrader,
 		tenantFromCtx: tenantFromCtx,
 		log:           log.With().Str("component", "ws.Handler").Logger(),
 	}
@@ -37,7 +50,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "tenant required", http.StatusUnauthorized)
 		return
 	}
-	conn, err := Upgrader.Upgrade(w, r, nil)
+	conn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		h.log.Debug().Err(err).Msg("ws: upgrade failed")
 		return

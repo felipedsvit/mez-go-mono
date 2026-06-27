@@ -38,6 +38,16 @@ type Config struct {
 	APIJWTSecret       string `mapstructure:"api_jwt_secret"`
 	ReconcileBatch     int    `mapstructure:"reconcile_batch"`
 	OutboxBatch        int    `mapstructure:"outbox_batch"`
+	// WSAllowedOrigins: lista (CSV) de origens (scheme://host[:port])
+	// aceitas no WebSocket upgrade. Issue #129 (C1 audit). Vazio
+	// rejeita todas as cross-origin; same-origin passa via Host.
+	WSAllowedOrigins string `mapstructure:"ws_allowed_origins"`
+	// WSAllowSameOrigin: aceita requests sem Origin (curl, Postman,
+	// clientes Go). Default false em production hardening.
+	WSAllowSameOrigin bool `mapstructure:"ws_allow_same_origin"`
+	// WSTrustedProxy: honra X-Forwarded-Origin/-Proto. Apenas se
+	// houver reverse proxy controlado na frente.
+	WSTrustedProxy bool `mapstructure:"ws_trusted_proxy"`
 }
 
 func Load() (Config, error) {
