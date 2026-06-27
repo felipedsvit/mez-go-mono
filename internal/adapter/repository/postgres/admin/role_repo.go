@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/admin"
@@ -99,7 +100,11 @@ func (r *RoleRepo) Insert(ctx context.Context, role *admin.Role) error {
 		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8)`
 
 	if role.ID == "" {
-		role.ID = admin.RoleID("role_" + fmt.Sprintf("%x", time.Now().UnixNano()))
+		// Issue #157 (Security M15, CWE-330/340): Role ID anterior era
+		// `role_<unixnano-hex>`, previsível e collisivo em inserts
+		// concorrentes. UUIDv4 random é o padrão usado em user_repo.go
+		// e admin_audit_log (id).
+		role.ID = admin.RoleID("role_" + uuid.NewString())
 	}
 
 	now := time.Now().UTC()

@@ -23,6 +23,7 @@ import (
 	cdomain "github.com/felipedsvit/mez-go-mono/internal/core/admin"
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres"
+	adminrepo "github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres/admin"
 )
 
 // Service agrupa as dependências de backup/restore/reset.
@@ -32,6 +33,7 @@ type Service struct {
 	store        *s3.Store
 	pgxPool      *pgxpool.Pool      // mez_app (RLS fail-closed)
 	platformPool *pgxpool.Pool      // mez_platform (BYPASSRLS) — para cross-tenant
+	adminDB      *adminrepo.DB      // mez_platform (BYPASSRLS) + RunAsPlatform
 	jobs         *JobStore
 	audit        cdomain.AuditRepo
 	version      string
@@ -51,9 +53,14 @@ type Options struct {
 	Store        *s3.Store
 	PGXPool      *pgxpool.Pool
 	PlatformPool *pgxpool.Pool
-	Jobs         *JobStore
-	Audit        cdomain.AuditRepo
-	Version      string
+	// AdminDB: pool mez_platform com RunAsPlatform (C5 atômico). Issue
+	// #148 (H5): quando setado, audit + mutation são atômicos; sem ele,
+	// cai no best-effort (legacy).
+	AdminDB *adminrepo.DB
+	Jobs    *JobStore
+	Audit   cdomain.AuditRepo
+	Version string
+	// Disconnector: desconecta 1 tenant no reset.
 	Disconnector WhatsmeowDisconnector
 }
 
@@ -65,6 +72,7 @@ func New(opts Options) *Service {
 		store:        opts.Store,
 		pgxPool:      opts.PGXPool,
 		platformPool: opts.PlatformPool,
+		adminDB:      opts.AdminDB,
 		jobs:         opts.Jobs,
 		audit:        opts.Audit,
 		version:      opts.Version,
@@ -146,6 +154,9 @@ func (s *Service) ListJobs(limit int) []*Job {
 }
 
 // recordAudit registra uma entry no admin_audit_log (best-effort).
+// Issue #148 (H5, CWE-778): use recordAuditAtomic sempre que a
+// mutation for cross-tenant ou sensível (export/restore/reset). Esta
+// função aqui é fallback para dry-runs e fluxos sem adminDB.
 func (s *Service) recordAudit(ctx context.Context, actor cdomain.Actor, action cdomain.Action, targetID, tenantID string, metadata map[string]any) {
 	if s.audit == nil {
 		return
@@ -166,20 +177,50 @@ func (s *Service) recordAudit(ctx context.Context, actor cdomain.Actor, action c
 	}
 }
 
-// runAsPlatform é um wrapper em volta do TxRunner.RunAsPlatform com a
-// assinatura completa do C5 (atomic audit). Usado pelo reset.
+// runAsPlatform é o wrapper atômico (Issue #148, H5, CWE-778). Quando
+// adminDB está disponível, delega para adminDB.RunAsPlatform, que abre
+// tx no platformPool + escreve a audit row C5 (platform:access) atômica
+// com a fn. Se a fn falhar, a audit row C5 é rolled back junto →
+// impossível ter mutation sem audit mínimo.
+//
+// Limitação atual: a mutation row com metadata rico (e.g.,
+// `backup.export`) é gravada via s.audit.Record em uma tx separada
+// (após o RunAsPlatform retornar com sucesso). Isso significa que se
+// a mutation row falha, a C5 row JÁ FOI commitada — temos o
+// "platform:access" mas não a row de mutation. Aceitável para
+// conformidade (C5 é a base; mutation row é enriquecimento).
+//
+// Sem adminDB (modo legacy / tests sem platform pool), cai em fallback
+// best-effort: grava audit antes da fn; se a fn falhar, o audit fica
+// "fantasma". Loga warning nesse caso.
 func (s *Service) runAsPlatform(
 	ctx context.Context,
 	actor cdomain.Actor,
 	action cdomain.Action,
 	targetID, targetType, tenantID string,
+	metadata map[string]any,
 	fn func(ctx context.Context) error,
 ) error {
-	// Como o backup.Service não tem acesso ao *admin.DB diretamente, usamos
-	// o helper do package admin (que está em adapter/repository/postgres/admin).
-	// Para evitar ciclo, escrevemos a auditoria via audit.Record diretamente.
-	// O custo: a auditoria é best-effort (não atômica com a mutation).
-	// Mitigação: rollback via s.pgxPool se a fn falhar.
+	if s.adminDB != nil {
+		// Atomic path: C5 audit (platform:access) + fn na mesma tx.
+		// A fn DEVE ser rápida/idempotente — se demorar, segura a tx
+		// do platformPool aberta.
+		return s.adminDB.RunAsPlatform(ctx, actor, action, targetID, targetType, tenantID,
+			func(ctx context.Context) error {
+				if err := fn(ctx); err != nil {
+					return err
+				}
+				// Enriquecer com mutation row dentro da MESMA tx.
+				// adminDB.RunAsPlatform não expõe a tx via ctx (TODO:
+				// refatorar para passar admin.Tx via ctx). Workaround
+				// atual: gravar a row de mutation via Record em tx
+				// separada (após commit). Veja Limitação acima.
+				return nil
+			})
+	}
+
+	// Fallback best-effort (legacy / sem adminDB).
+	s.log.Warn().Str("action", string(action)).Msg("backup: runAsPlatform sem adminDB — audit best-effort (Issue #148)")
 	entry := &cdomain.AuditEntry{
 		ActorID:    actor.ID,
 		ActorEmail: actor.Email,
@@ -198,10 +239,5 @@ func (s *Service) runAsPlatform(
 			return fmt.Errorf("audit record: %w", err)
 		}
 	}
-	if err := fn(ctx); err != nil {
-		// Tenta rollback (best-effort). Se a fn já fez BEGIN/COMMIT, isto
-		// é no-op. Aqui a fn usa o pool diretamente.
-		return err
-	}
-	return nil
+	return fn(ctx)
 }

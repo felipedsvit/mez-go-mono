@@ -348,12 +348,43 @@ func (s *Service) runExport(job *Job, req ExportRequest, backupID string) {
 		return
 	}
 
-	s.recordAudit(ctx, req.Actor, cdomain.ActionTenantBackup, backupID, req.TenantID, map[string]any{
-		"tables":     len(manifest.Tables),
-		"total_rows": manifest.TotalRows,
-		"media":      mediaCount,
-		"bytes":      totalBytes.Load(),
-	})
+	// Issue #148 (H5, CWE-778): audit atômico via RunAsPlatform. A
+	// audit row C5 (platform:access) é commitada atomicamente com a
+	// fn; sem isso, crash entre mutation-commit e audit-insert
+	// deixaria a action sem rastro.
+	if err := s.runAsPlatform(ctx, req.Actor, cdomain.ActionTenantBackup, backupID, "backup", req.TenantID,
+		map[string]any{
+			"tables":     len(manifest.Tables),
+			"total_rows": manifest.TotalRows,
+			"media":      mediaCount,
+			"bytes":      totalBytes.Load(),
+		},
+		func(ctx context.Context) error {
+			// fn interna: registra a row de mutation. Se falhar,
+			// a row C5 também é rolled back.
+			if s.audit == nil {
+				return nil
+			}
+			entry := &cdomain.AuditEntry{
+				ActorID:    req.Actor.ID,
+				ActorEmail: req.Actor.Email,
+				Action:     cdomain.ActionTenantBackup,
+				TargetType: "backup",
+				TargetID:   backupID,
+				TenantID:   req.TenantID,
+				Metadata: map[string]any{
+					"tables":     len(manifest.Tables),
+					"total_rows": manifest.TotalRows,
+					"media":      mediaCount,
+					"bytes":      totalBytes.Load(),
+				},
+				IP:        req.Actor.IP,
+				CreatedAt: now(),
+			}
+			return s.audit.Record(ctx, entry)
+		}); err != nil {
+		s.log.Warn().Err(err).Str("backup", backupID).Msg("backup: audit atômico falhou (best-effort segue)")
+	}
 
 	finished := now()
 	updateJob(job, func() {

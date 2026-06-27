@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -52,6 +53,19 @@ type Config struct {
 	// binário que se auto-migra. Default true para dev; em prod
 	// recomenda-se false e rodar migrations em job separado.
 	MigrateOnBoot bool `mapstructure:"migrate_on_boot"`
+	// HTTPReadHeaderTimeout / HTTPReadTimeout / HTTPWriteTimeout /
+	// HTTPIdleTimeout: timeouts do http.Server. Issue #143 (H14b,
+	// CWE-400) — defaults seguros se unset (= 0) para evitar
+	// slow-loris. Em prod recomenda-se não setar (deixa o default);
+	// em dev pode-se encurtar para teste.
+	HTTPReadHeaderTimeout string `mapstructure:"http_read_header_timeout"`
+	HTTPReadTimeout       string `mapstructure:"http_read_timeout"`
+	HTTPWriteTimeout      string `mapstructure:"http_write_timeout"`
+	HTTPIdleTimeout       string `mapstructure:"http_idle_timeout"`
+	// HTTPMaxHeaderBytes: limite de header (Issue #152 H14a). Default
+	// 1 MiB protege contra heap blow-up. Headers legítimos cabem em
+	// < 4 KiB.
+	HTTPMaxHeaderBytes int `mapstructure:"http_max_header_bytes"`
 	// WSAllowedOrigins: lista (CSV) de origens (scheme://host[:port])
 	// aceitas no WebSocket upgrade. Issue #129 (C1 audit). Vazio
 	// rejeita todas as cross-origin; same-origin passa via Host.
@@ -90,6 +104,13 @@ func Load() (Config, error) {
 	v.SetDefault("reconcile_batch", 100)
 	v.SetDefault("outbox_batch", 32)
 	v.SetDefault("migrate_on_boot", true) // Fase 8 #99 sub-issue
+	// Issue #143 (H14b): timeouts do http.Server. Defaults seguros
+	// para slow-loris defense. Em dev os envs podem encurtar para teste.
+	v.SetDefault("http_read_header_timeout", "5s")
+	v.SetDefault("http_read_timeout", "15s")
+	v.SetDefault("http_write_timeout", "15s")
+	v.SetDefault("http_idle_timeout", "60s")
+	v.SetDefault("http_max_header_bytes", 1<<20) // 1 MiB
 	v.SetDefault("session_cookie_secure", true) // issue #131 — __Host- exige Secure
 
 	cfg := Config{}
@@ -157,6 +178,16 @@ func (c Config) ValidateServe() error {
 	entropy := ShannonEntropy(c.APIJWTSecret)
 	if entropy < MinEntropyBits {
 		return fmt.Errorf("MEZ_API_JWT_SECRET entropy too low (%.2f bits < %.2f min); generate with `openssl rand -base64 32`", entropy, MinEntropyBits)
+	}
+	// Issue #143 (H14b): valida timeouts do http.Server. Se a env for
+	// vazia, parse falha → 0 → fail-closed. Garante que slow-loris
+	// defense nunca é desabilitada por erro de configuração.
+	rht, err := time.ParseDuration(c.HTTPReadHeaderTimeout)
+	if err != nil || rht <= 0 {
+		return fmt.Errorf("MEZ_HTTP_READ_HEADER_TIMEOUT must be a positive duration (e.g. \"5s\"); got %q", c.HTTPReadHeaderTimeout)
+	}
+	if c.HTTPMaxHeaderBytes <= 0 {
+		return fmt.Errorf("MEZ_HTTP_MAX_HEADER_BYTES must be positive; got %d", c.HTTPMaxHeaderBytes)
 	}
 	return nil
 }

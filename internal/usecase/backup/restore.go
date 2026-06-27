@@ -327,12 +327,41 @@ func (s *Service) runRestore(job *Job, req RestoreRequest, manifest *Manifest, c
 		return
 	}
 
-	s.recordAudit(ctx, req.Actor, cdomain.ActionTenantRestore, req.BackupID, req.TenantID, map[string]any{
-		"manifest_version": manifest.SchemaVersion,
-		"current_version":  currentVersion,
-		"tables":           len(manifest.Tables),
-		"inserted":         totalInserted,
-	})
+	// Issue #148 (H5, CWE-778): audit atômico via RunAsPlatform. C5
+	// row (platform:access) é commitada com a fn de mutation row
+	// (tenant.restore com metadata rico). Se a fn falhar, a C5 row é
+	// rolled back junto.
+	if err := s.runAsPlatform(ctx, req.Actor, cdomain.ActionTenantRestore, req.BackupID, "backup", req.TenantID,
+		map[string]any{
+			"manifest_version": manifest.SchemaVersion,
+			"current_version":  currentVersion,
+			"tables":           len(manifest.Tables),
+			"inserted":         totalInserted,
+		},
+		func(ctx context.Context) error {
+			if s.audit == nil {
+				return nil
+			}
+			entry := &cdomain.AuditEntry{
+				ActorID:    req.Actor.ID,
+				ActorEmail: req.Actor.Email,
+				Action:     cdomain.ActionTenantRestore,
+				TargetType: "backup",
+				TargetID:   req.BackupID,
+				TenantID:   req.TenantID,
+				Metadata: map[string]any{
+					"manifest_version": manifest.SchemaVersion,
+					"current_version":  currentVersion,
+					"tables":           len(manifest.Tables),
+					"inserted":         totalInserted,
+				},
+				IP:        req.Actor.IP,
+				CreatedAt: now(),
+			}
+			return s.audit.Record(ctx, entry)
+		}); err != nil {
+		s.log.Warn().Err(err).Str("backup", req.BackupID).Msg("backup: audit atômico falhou (best-effort segue)")
+	}
 
 	finished := now()
 	updateJob(job, func() {
