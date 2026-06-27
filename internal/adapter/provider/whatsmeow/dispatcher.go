@@ -149,7 +149,11 @@ type (
 	StreamErrorEvent     struct{ Code string }
 	CallOfferEvent       struct{ From, ID string }
 	CallOfferNoticeEvent struct{ From, ID string }
-	HistorySyncEvent     struct{ Data any }
-	PresenceEvent        struct{ From, State string }
-	ChatPresenceEvent    struct{ From, State string }
+	HistorySyncEvent     struct {
+		Data     any
+		JID      string
+		Messages []HistoryMessage
+	}
+	PresenceEvent     struct{ From, State string }
+	ChatPresenceEvent struct{ From, State string }
 )

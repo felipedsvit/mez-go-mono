@@ -1,0 +1,90 @@
+package templates
+
+// SettingRow é uma linha da tabela de system settings (Fase 10 #177).
+// Substitui as env vars MEZ_*.
+type SettingRow struct {
+	Key         string
+	Value       string
+	Description string
+	UpdatedAt   string
+	UpdatedBy   string
+}
+
+// SettingsData é a prop para /admin/settings.
+type SettingsData struct {
+	Page     PageData
+	Settings []SettingRow
+}
+
+templ Settings(d SettingsData) {
+	@Layout("System Settings", d.Page) {
+		<h1>System Settings</h1>
+		<p class="muted">App-level config (Fase 10). Substitui MEZ_WHATSMEOW_* e futuras env vars. Valores cifrados com a master KEK.</p>
+		<div class="card">
+			if len(d.Settings) == 0 {
+				<p class="muted">Nenhuma setting configurada. Use o botão abaixo para adicionar.</p>
+			} else {
+				<table>
+					<thead>
+						<tr>
+							<th>Key</th>
+							<th>Value (cifrado)</th>
+							<th>Description</th>
+							<th>Updated</th>
+							<th>By</th>
+							<th></th>
+						</tr>
+					</thead>
+					<tbody>
+						for _, s := range d.Settings {
+							<tr>
+								<td><code>{ s.Key }</code></td>
+								<td><code class="truncate">{ s.Value }</code></td>
+								<td>{ s.Description }</td>
+								<td class="muted">{ s.UpdatedAt }</td>
+								<td>{ s.UpdatedBy }</td>
+								<td>
+									<form method="post" action={ templ.SafeURL("/admin/settings/" + s.Key + "/delete") } style="display:inline">
+										<input type="hidden" name="actor" value="admin@local"/>
+										<button type="submit" class="danger" onclick="return confirm('Remover setting?')">Delete</button>
+									</form>
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			}
+		</div>
+		<h2>Nova / Atualizar setting</h2>
+		<div class="card">
+			<form method="post" action="/admin/settings">
+				<label>Key
+					<input type="text" name="key" required placeholder="ex.: whatsmeow.enabled"/>
+				</label>
+				<label>Value (JSON: bool, número, string, etc.)
+					<input type="text" name="value" required placeholder="ex.: true ou postgres://..."/>
+				</label>
+				<label>Description (opcional)
+					<input type="text" name="description" placeholder="ex.: Liga o whatsmeow real"/>
+				</label>
+				<label>Actor (email do admin)
+					<input type="text" name="actor" required value="admin@local"/>
+				</label>
+				<button type="submit">Salvar</button>
+			</form>
+		</div>
+		<details>
+			<summary>Defaults conhecidos (Fase 10 #177)</summary>
+			<ul>
+				<li><code>whatsmeow.enabled</code> (bool) — Liga o whatsmeow real</li>
+				<li><code>whatsmeow.device_dsn</code> (string) — DSN do session store Postgres</li>
+				<li><code>whatsmeow.identity.kind</code> (string) — chrome, edge, none</li>
+				<li><code>whatsmeow.identity.os</code> (string) — Mac OS (default), Linux, etc.</li>
+				<li><code>ffmpeg.concurrency</code> (int) — Limite de subprocessos ffmpeg</li>
+				<li><code>bus.inbound.buffer</code> (int) — Buffer inbound do bus</li>
+				<li><code>bus.outbound.buffer</code> (int) — Buffer outbound do bus</li>
+				<li><code>reconcile.interval</code> (string) — Intervalo do reconciler (ex.: 30s)</li>
+			</ul>
+		</details>
+	}
+}

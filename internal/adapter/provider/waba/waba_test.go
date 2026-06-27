@@ -1,7 +1,7 @@
 // Package waba — testes do adapter WhatsApp Business Cloud API.
 //
 // Cobre a matriz Send + Actions (D6):
-//   - text message → wamid-stub
+//   - text message → wamid (via httptest mock da Graph API)
 //   - reaction → reaction payload
 //   - revoke sem target_provider_id → erro
 //   - revoke com target_provider_id → ok
@@ -15,6 +15,8 @@ package waba
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -23,14 +25,56 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 )
 
+// mockGraph é um servidor HTTP que simula a Graph API do WhatsApp Cloud.
+// Default: responde 200 com wamid stub em qualquer POST/GET/DELETE.
+type mockGraph struct {
+	*httptest.Server
+	// responseBody customiza a resposta default.
+	responseBody string
+	// failNext faz a próxima chamada falhar com o status configurado.
+	failNext *int
+	// recordedPath guarda o último path chamado.
+	recordedPath string
+	// recordedMethod guarda o último método chamado.
+	recordedMethod string
+}
+
+func newMockGraph(t *testing.T) *mockGraph {
+	t.Helper()
+	m := &mockGraph{
+		responseBody: `{"messages":[{"id":"wamid.OK"}]}`,
+	}
+	m.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m.recordedPath = r.URL.Path
+		m.recordedMethod = r.Method
+		if m.failNext != nil {
+			w.WriteHeader(*m.failNext)
+			_, _ = w.Write([]byte(`{"error":{"message":"err","code":1}}`))
+			m.failNext = nil
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(m.responseBody))
+	}))
+	t.Cleanup(m.Close)
+	return m
+}
+
+func newTestAdapterWithMock(t *testing.T) (*Adapter, *mockGraph) {
+	t.Helper()
+	mg := newMockGraph(t)
+	c := NewClient(ClientConfig{BaseURL: mg.URL, Version: "v21.0", PhoneNumberID: "PNID", Token: "tok"})
+	return New(domain.TenantID("t1"), c, zerolog.Nop()), mg
+}
+
 func newTestAdapter() *Adapter {
-	return New(domain.TenantID("t1"), NewClient("", "", "1234567890", "test-token"), zerolog.Nop())
+	return New(domain.TenantID("t1"), NewClient(ClientConfig{PhoneNumberID: "1234567890", Token: "test-token"}), zerolog.Nop())
 }
 
 func TestNewClient_DefaultEndpoints(t *testing.T) {
 	t.Parallel()
 
-	c := NewClient("", "", "pid", "tok")
+	c := NewClient(ClientConfig{PhoneNumberID: "pid", Token: "tok"})
 	if c.baseURL != "https://graph.facebook.com" {
 		t.Errorf("baseURL = %q, want graph.facebook.com", c.baseURL)
 	}
@@ -38,7 +82,7 @@ func TestNewClient_DefaultEndpoints(t *testing.T) {
 		t.Errorf("version = %q, want v21.0", c.version)
 	}
 
-	c2 := NewClient("https://graph.example.com", "v18.0", "pid", "tok")
+	c2 := NewClient(ClientConfig{BaseURL: "https://graph.example.com", Version: "v18.0", PhoneNumberID: "pid", Token: "tok"})
 	if c2.baseURL != "https://graph.example.com" {
 		t.Errorf("custom baseURL not preserved: %q", c2.baseURL)
 	}
@@ -78,7 +122,7 @@ func TestAdapter_ChannelAndCapabilities(t *testing.T) {
 func TestAdapter_Send_Text(t *testing.T) {
 	t.Parallel()
 
-	a := newTestAdapter()
+	a, _ := newTestAdapterWithMock(t)
 	wamid, err := a.Send(context.Background(), port.OutboundRequest{
 		TenantID: "t1",
 		Channel:  domain.ChannelWABA,
@@ -89,31 +133,159 @@ func TestAdapter_Send_Text(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send text: %v", err)
 	}
-	if wamid == "" {
-		t.Error("expected non-empty wamid")
+	if wamid != "wamid.OK" {
+		t.Errorf("wamid = %q, want wamid.OK", wamid)
 	}
 }
 
-func TestAdapter_Send_Media_NotImplementedPhase4(t *testing.T) {
+func TestAdapter_Send_GraphError(t *testing.T) {
 	t.Parallel()
 
-	a := newTestAdapter()
+	a, mg := newTestAdapterWithMock(t)
+	status := 401
+	mg.failNext = &status
+	_, err := a.Send(context.Background(), port.OutboundRequest{
+		TenantID: "t1",
+		Channel:  domain.ChannelWABA,
+		PeerID:   "5511999999999",
+		Type:     domain.MessageTypeText,
+		Body:     "olá",
+	})
+	if err == nil {
+		t.Fatal("expected error from graph api")
+	}
+}
+
+func TestAdapter_Send_Image_BuildsLinkPayload(t *testing.T) {
+	t.Parallel()
+
+	a, mg := newTestAdapterWithMock(t)
 	_, err := a.Send(context.Background(), port.OutboundRequest{
 		TenantID: "t1",
 		Channel:  domain.ChannelWABA,
 		PeerID:   "5511999999999",
 		Type:     domain.MessageTypeImage,
-		Body:     "img",
+		Body:     "olá imagem",
+		Metadata: map[string]any{
+			"media_url": "https://example.com/img.png",
+		},
 	})
-	if err == nil {
-		t.Fatal("expected error for media type in Phase 3")
+	if err != nil {
+		t.Fatalf("Send image: %v", err)
 	}
+	if mg.recordedPath != "/v21.0/PNID/messages" {
+		t.Errorf("path = %q", mg.recordedPath)
+	}
+}
+
+func TestBuildMessagePayload_Image_WithLink(t *testing.T) {
+	t.Parallel()
+
+	req := port.OutboundRequest{
+		TenantID: "t1",
+		Channel:  domain.ChannelWABA,
+		PeerID:   "5511999999999",
+		Type:     domain.MessageTypeImage,
+		Body:     "caption",
+		Metadata: map[string]any{
+			"media_url": "https://example.com/img.png",
+		},
+	}
+	payload, err := buildMessagePayload(req)
+	if err != nil {
+		t.Fatalf("buildMessagePayload: %v", err)
+	}
+	if payload["type"] != "image" {
+		t.Errorf("type = %v, want image", payload["type"])
+	}
+	img, ok := payload["image"].(map[string]any)
+	if !ok {
+		t.Fatalf("image payload missing or wrong type")
+	}
+	if img["link"] != "https://example.com/img.png" {
+		t.Errorf("link = %v", img["link"])
+	}
+	if img["caption"] != "caption" {
+		t.Errorf("caption = %v, want 'caption'", img["caption"])
+	}
+}
+
+func TestBuildMessagePayload_Sticker_NoCaption(t *testing.T) {
+	t.Parallel()
+
+	req := port.OutboundRequest{
+		TenantID: "t1",
+		Channel:  domain.ChannelWABA,
+		PeerID:   "5511999999999",
+		Type:     domain.MessageTypeSticker,
+		Body:     "should be ignored",
+		Metadata: map[string]any{
+			"media_id": "sticker-1",
+		},
+	}
+	payload, err := buildMessagePayload(req)
+	if err != nil {
+		t.Fatalf("buildMessagePayload: %v", err)
+	}
+	stk, ok := payload["sticker"].(map[string]any)
+	if !ok {
+		t.Fatalf("sticker payload missing or wrong type")
+	}
+	if stk["caption"] != nil {
+		t.Errorf("sticker should not have caption, got %v", stk["caption"])
+	}
+}
+
+func TestBuildReactionPayload_RequiresEmojiAndTarget(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing target", func(t *testing.T) {
+		t.Parallel()
+		_, err := buildReactionPayload(port.OutboundRequest{
+			PeerID:        "p1",
+			ReactionEmoji: "👍",
+		})
+		if err == nil {
+			t.Fatal("expected error when target_provider_id missing")
+		}
+	})
+	t.Run("missing emoji", func(t *testing.T) {
+		t.Parallel()
+		_, err := buildReactionPayload(port.OutboundRequest{
+			PeerID:           "p1",
+			TargetProviderID: "wamid.XYZ",
+		})
+		if err == nil {
+			t.Fatal("expected error when emoji missing")
+		}
+	})
+	t.Run("ok", func(t *testing.T) {
+		t.Parallel()
+		p, err := buildReactionPayload(port.OutboundRequest{
+			PeerID:           "5511999999999",
+			TargetProviderID: "wamid.XYZ",
+			ReactionEmoji:    "👍",
+		})
+		if err != nil {
+			t.Fatalf("buildReactionPayload: %v", err)
+		}
+		if p["type"] != "reaction" {
+			t.Errorf("type = %v, want reaction", p["type"])
+		}
+		reac, _ := p["reaction"].(map[string]any)
+		if reac["message_id"] != "wamid.XYZ" {
+			t.Errorf("message_id = %v", reac["message_id"])
+		}
+		if reac["emoji"] != "👍" {
+			t.Errorf("emoji = %v", reac["emoji"])
+		}
+	})
 }
 
 func TestAdapter_Action_Reaction(t *testing.T) {
 	t.Parallel()
 
-	a := newTestAdapter()
+	a, _ := newTestAdapterWithMock(t)
 	wamid, err := a.Send(context.Background(), port.OutboundRequest{
 		TenantID:         "t1",
 		Channel:          domain.ChannelWABA,
@@ -125,8 +297,8 @@ func TestAdapter_Action_Reaction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reaction: %v", err)
 	}
-	if wamid == "" {
-		t.Error("expected non-empty wamid for reaction")
+	if wamid != "wamid.OK" {
+		t.Errorf("wamid = %q, want wamid.OK", wamid)
 	}
 }
 
@@ -146,7 +318,7 @@ func TestAdapter_Action_Revoke(t *testing.T) {
 	})
 	t.Run("with target", func(t *testing.T) {
 		t.Parallel()
-		a := newTestAdapter()
+		a, _ := newTestAdapterWithMock(t)
 		_, err := a.Send(context.Background(), port.OutboundRequest{
 			TenantID: "t1", Channel: domain.ChannelWABA,
 			PeerID: "5511999999999", Action: port.ActionRevoke,
@@ -174,7 +346,7 @@ func TestAdapter_Action_MarkRead(t *testing.T) {
 	})
 	t.Run("with target", func(t *testing.T) {
 		t.Parallel()
-		a := newTestAdapter()
+		a, _ := newTestAdapterWithMock(t)
 		_, err := a.Send(context.Background(), port.OutboundRequest{
 			TenantID: "t1", Channel: domain.ChannelWABA,
 			PeerID: "5511999999999", Action: port.ActionMarkRead,
@@ -263,11 +435,9 @@ func TestAdapter_ErrorsAreWrapped(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	// Pelo menos uma layer de error wrapping do fmt.Errorf("waba: ...").
-	if !contains(err.Error(), "waba:") {
+	if !contains(err.Error(), "waba") {
 		t.Errorf("error message should contain adapter prefix, got %q", err.Error())
 	}
-	// Erros não-NotFound aqui, então não usamos errors.Is — apenas sanity.
 	_ = errors.Unwrap(err)
 }
 

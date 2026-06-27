@@ -46,11 +46,17 @@ type Server struct {
 	users   ucadmin.UserUseCase
 	roles   ucadmin.RoleUseCase
 	audit   ucadmin.AuditQueryUseCase
+	// auditRepo é o port de escrita (Record). Usado pelo middleware
+	// RequireScope para logar negações. Issue #132 (Sprint 0A C4 audit).
+	auditRepo cdomain.AuditRepo
 
 	// Fase 6: backup service + admin verifier (para reset). Opcional —
 	// se nil, rotas de backup/reset retornam 404.
 	backup   *ucbackup.Service
 	verifier ucbackup.AdminVerifier
+
+	// Fase 10 (#177): system settings (substitui env vars app-level).
+	settings *SettingsHandlers
 }
 
 func NewServer(
@@ -67,6 +73,7 @@ func NewServer(
 	users ucadmin.UserUseCase,
 	roles ucadmin.RoleUseCase,
 	audit ucadmin.AuditQueryUseCase,
+	auditRepo cdomain.AuditRepo,
 ) *Server {
 	return &Server{
 		log:          log,
@@ -82,6 +89,7 @@ func NewServer(
 		users:        users,
 		roles:        roles,
 		audit:        audit,
+		auditRepo:    auditRepo,
 	}
 }
 
@@ -92,10 +100,19 @@ func (s *Server) SetBackupService(svc *ucbackup.Service, verifier ucbackup.Admin
 	s.verifier = verifier
 }
 
+// SetSettingsHandlers injeta o handler de system settings (Fase 10 #177).
+// Opcional — se não chamado, rotas /admin/settings não são registradas.
+func (s *Server) SetSettingsHandlers(h *SettingsHandlers) {
+	s.settings = h
+}
+
 func (s *Server) Router() chi.Router {
 	r := chi.NewRouter()
 
-	r.Use(middleware.SecurityHeaders(false))
+	// Issue #146 (Sprint 0B H13): HSTS condicional ao TLS ativo.
+	// Antes era hardcoded false → HSTS nunca emitido. Agora segue
+	// cfg.SessionCookieSecure (já true por default em prod, ver #131).
+	r.Use(middleware.SecurityHeaders(s.sessionCfg.Secure))
 	r.Use(middleware.Session(s.sessionCfg))
 
 	r.Get("/login", s.handleLoginGET)
@@ -113,33 +130,52 @@ func (s *Server) Router() chi.Router {
 		// /login fica fora deste grupo (não precisa de CSRF no login).
 		r.Use(middleware.CSRF(middleware.DefaultCSRFConfig()))
 
+		// Issue #132 (Sprint 0A C4 audit): gate de autorização por
+		// (Permission, Scope). Cada handler state-changing tem o seu.
+		// GETs públicos para o próprio user (dashboard, list, detail)
+		// ficam sem gate (já passaram RequireAuth).
+		platformUsers := middleware.RequireScope(cdomain.PermCreateUsers, cdomain.ScopePlatform, s.auditRepo)
+		platformUpdateUsers := middleware.RequireScope(cdomain.PermUpdateUsers, cdomain.ScopePlatform, s.auditRepo)
+		platformTenants := middleware.RequireScope(cdomain.PermCreateTenants, cdomain.ScopePlatform, s.auditRepo)
+		platformUpdateTenants := middleware.RequireScope(cdomain.PermUpdateTenants, cdomain.ScopePlatform, s.auditRepo)
+		platformUpdateRoles := middleware.RequireScope(cdomain.PermUpdateRoles, cdomain.ScopePlatform, s.auditRepo)
+		platformManageChannels := middleware.RequireScope(cdomain.PermManageChannels, cdomain.ScopePlatform, s.auditRepo)
+
 		r.Get("/", s.handleDashboard)
 		r.Get("/tenants", s.handleTenantsList)
 		r.Get("/tenants/new", s.handleTenantNew)
-		r.Post("/tenants", s.handleTenantCreate)
-		r.Post("/tenants/{id}/status", s.handleTenantStatus)
+		r.With(platformTenants).Post("/tenants", s.handleTenantCreate)
+		r.With(platformUpdateTenants).Post("/tenants/{id}/status", s.handleTenantStatus)
 
 		r.Get("/users", s.handleUsersList)
 		r.Get("/users/new", s.handleUserInvite)
-		r.Post("/users", s.handleUserCreate)
-		r.Post("/users/{id}/status", s.handleUserStatus)
+		r.With(platformUsers).Post("/users", s.handleUserCreate)
+		r.With(platformUpdateUsers).Post("/users/{id}/status", s.handleUserStatus)
 
 		r.Get("/roles", s.handleRolesList)
 		r.Get("/roles/{id}", s.handleRoleDetail)
-		r.Post("/roles/{id}/permissions", s.handleRolePermissions)
+		r.With(platformUpdateRoles).Post("/roles/{id}/permissions", s.handleRolePermissions)
 
 		r.Get("/audit", s.handleAuditList)
 
 		// Fase 6: backup/restore/reset UI (#86, #87).
 		if s.backup != nil {
 			r.Get("/tenants/{id}/backup", s.handleBackupPage)
-			r.Post("/tenants/{id}/backup", s.handleBackupStart)
+			r.With(platformManageChannels).Post("/tenants/{id}/backup", s.handleBackupStart)
 			r.Get("/tenants/{id}/backup/status", s.handleBackupStatus)
 			r.Get("/tenants/{id}/backup/list", s.handleBackupList)
-			r.Post("/tenants/{id}/restore", s.handleRestoreStart)
+			r.With(platformManageChannels).Post("/tenants/{id}/restore", s.handleRestoreStart)
 
 			r.Get("/tenants/{id}/reset", s.handleResetPage)
-			r.Post("/tenants/{id}/reset", s.handleResetStart)
+			r.With(platformManageChannels).Post("/tenants/{id}/reset", s.handleResetStart)
+		}
+
+		// Fase 10 (#177): system settings UI (substitui env vars app-level).
+		if s.settings != nil {
+			r.Get("/settings", s.settings.listSettings)
+			r.With(platformManageChannels).Post("/settings", s.settings.postSetting)
+			r.Get("/settings/{key}", s.settings.jsonValue)
+			r.With(platformManageChannels).Post("/settings/{key}/delete", s.settings.deleteSetting)
 		}
 	})
 

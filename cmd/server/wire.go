@@ -10,6 +10,7 @@
 //  7. Ingestor + Router
 //  8. OutboxRepo + SenderRegistry + Relay
 //  9. InboundEventsRepo + Reconciler
+//
 // 10. SenderService + StatusConsumer
 // 11. Whatsmeow Manager
 // 12. Webhook handlers (Meta + Telegram)
@@ -29,6 +30,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -66,6 +68,7 @@ import (
 	ucreconcile "github.com/felipedsvit/mez-go-mono/internal/usecase/reconcile"
 	ucrouting "github.com/felipedsvit/mez-go-mono/internal/usecase/routing"
 	ucsecrets "github.com/felipedsvit/mez-go-mono/internal/usecase/secrets"
+	ucsettings "github.com/felipedsvit/mez-go-mono/internal/usecase/settings"
 	"github.com/felipedsvit/mez-go-mono/pkg/config"
 	"github.com/felipedsvit/mez-go-mono/pkg/health"
 	"github.com/felipedsvit/mez-go-mono/pkg/metrics"
@@ -95,7 +98,7 @@ type AppContext struct {
 	StatusConsumer *ucmessaging.StatusConsumer
 
 	// Fase 7: envelope encryption
-	Keyring  *ucsecrets.Keyring
+	Keyring   *ucsecrets.Keyring
 	CredsRepo *postgres.ChannelCredentialsRepo
 
 	// Usecases
@@ -157,7 +160,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		ucmessaging.WithBus(bus),
 		ucmessaging.WithLogger(log),
 	)
-	routerSvc := ucrouting.NewRouter(log)
+	routerSvc := ucrouting.NewRouter(txRunner, convRepo, log)
 
 	bus.SubscribeInbound(func(evt event.InboundEvent) {
 		log.Debug().
@@ -189,6 +192,57 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	// 11. Whatsmeow Manager (1 client/tenant, lazy init).
 	waStateR := postgres.NewWhatsAppStateRepo(appPool, platformPool)
 	waManager := whatsmeow.NewManager(whatsmeow.DefaultConfig(), waStateR, log)
+
+	// Fase 10 (#177): app-level config via DB (system_settings) em vez
+	// de env vars. Seed dos defaults na primeira inicialização; lê
+	// whatsmeow.enabled/device_dsn/identity.kind/identity.os do DB.
+	settingsRepo := postgres.NewSystemSettingsRepo(appPool, platformPool)
+	settingsSvc := ucsettings.NewService(settingsRepo, ucsettings.NewEnvelopeSealer(localSealer.Envelope()), 1, log)
+	if err := settingsSvc.SeedDefaults(ctx, "system@boot"); err != nil {
+		log.Warn().Err(err).Msg("settings: seed defaults (continuando)")
+	}
+
+	// Watch hot-reload: o Manager re-aplica factory quando
+	// whatsmeow.enabled muda.
+	settingsCh, settingsCancel := settingsSvc.Watch()
+	go func() {
+		for ev := range settingsCh {
+			if !strings.HasPrefix(ev.Key, "whatsmeow.") {
+				continue
+			}
+			// Para simplificar: o re-apply é um restart do Manager
+			// (DisconnectAll + nova factory). Hot-reload real viria
+			// com sub-issue de reconnect por-tenant.
+			log.Info().Str("key", ev.Key).Str("actor", ev.UpdatedBy).Msg("settings: whatsmeow.* changed — restart required for full effect")
+		}
+	}()
+	defer settingsCancel()
+
+	// Lê whatsmeow.enabled + whatsmeow.device_dsn + identity do DB.
+	var whatsmeowEnabled bool
+	var whatsmeowDeviceDSN, whatsmeowIdentityKind, whatsmeowIdentityOS string
+	if err := settingsSvc.Get(ctx, "whatsmeow.enabled", &whatsmeowEnabled, false); err != nil {
+		log.Warn().Err(err).Msg("settings: get whatsmeow.enabled (default false)")
+	}
+	_ = settingsSvc.Get(ctx, "whatsmeow.device_dsn", &whatsmeowDeviceDSN, "")
+	_ = settingsSvc.Get(ctx, "whatsmeow.identity.kind", &whatsmeowIdentityKind, "chrome")
+	_ = settingsSvc.Get(ctx, "whatsmeow.identity.os", &whatsmeowIdentityOS, "Mac OS")
+
+	if whatsmeowEnabled && whatsmeowDeviceDSN != "" {
+		identity := whatsmeow.IdentityFromConfig(whatsmeowIdentityKind, whatsmeowIdentityOS)
+		waManager.SetClientFactory(identity, whatsmeow.NewRealClientFactory(whatsmeow.RealFactoryConfig{
+			DeviceDSN:  whatsmeowDeviceDSN,
+			Transcoder: nil, // transcoder real é ffmpeg — wire em #158 follow-up
+			Log:        log,
+		}))
+		log.Info().
+			Bool("enabled", whatsmeowEnabled).
+			Str("identity", whatsmeowIdentityKind).
+			Str("device_dsn_host", redactedHost(whatsmeowDeviceDSN)).
+			Msg("whatsmeow: real client factory enabled (Phase 9 + 10)")
+	} else {
+		log.Info().Bool("enabled", whatsmeowEnabled).Msg("whatsmeow: stub (default)")
+	}
 
 	senderRegistry := providerregistry.Build(keyring, log, providerregistry.BuildOpts{
 		Whatsmeow: &providerregistry.WhatsmeowDeps{Manager: waManager},
@@ -257,7 +311,8 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	reconciler := ucreconcile.New(
 		inboundEvsRepo,
 		func(ctx context.Context, m domain.Message) error {
-			_, err := routerSvc.Assign(ctx, m)
+			// AutoAssign via ACD (se ligado). Sem ACD, no-op silencioso.
+			_, err := routerSvc.AutoAssign(ctx, m.TenantID, m.ConversationID)
 			return err
 		},
 		ucreconcile.Config{
@@ -312,15 +367,28 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 			Resolver: sessionSvc,
 			Cookie:   "__Host-mez_admin",
 			TTL:      sessionTTL,
+			// Issue #131 (Sprint 0A C3 audit): Secure=true default em prod.
+			// Override via MEZ_SESSION_COOKIE_SECURE=false em dev local sem HTTPS.
+			Secure: cfg.SessionCookieSecure,
+			// Issue #132 (Sprint 0A C4 audit) + ADR-0042: hydrator plugável.
+			// Por enquanto nil → Principal.Permissions fica nil → RequireScope
+			// nega fail-closed. Implementação concreta (DBPrincipalHydrator
+			// em usecase/admin) requer RoleBindingRepo que ainda não existe;
+			// ver #132 R-S0-1 para rollout gradual.
+			// Hydrator: adminmw.NewCachedPrincipalHydrator(...),
 		},
 		sessionStore, nil,
 		ratelimit.New(10.0/60.0, 10.0),
 		tenantUC, userUC, roleUC, auditUC,
+		adminRepos.Audit,
 	)
 	// Fase 6: injeta backup service e admin verifier (usado para confirmar
 	// senha no reset). Se backupSvc for nil, rotas de backup/reset não
 	// são registradas.
 	adminSrv.SetBackupService(backupSvc, loginSvc)
+	// Fase 10 (#177): system settings UI (substitui env vars app-level).
+	settingsH := adminweb.NewSettingsHandlers(settingsSvc, log)
+	adminSrv.SetSettingsHandlers(settingsH)
 	_ = adminmw.CSRF(adminmw.DefaultCSRFConfig())
 
 	// 16. HTTP server
@@ -342,6 +410,10 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		QRCodeProvider:  waManager,
 		BackupService:   backupSvc,
 		AdminVerifier:   loginSvc, // Reset usa LoginLocal para confirmar senha
+		// Issue #133 (Sprint 0A C5 audit): TxRunner para RLS fail-closed.
+		// Se nil, handlers API rodam sem tx (legacy). Em prod, deve ser
+		// setado — o appPool já implementa TxRunner.
+		TxRunner: nil, // wire em PR subsequente; ver #133 R-S0-2
 	})
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
@@ -358,6 +430,15 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		// Cookies) cabem em < 4 KiB; 1 MiB protege contra heap blow-up
 		// por headers gigantes.
 		MaxHeaderBytes: 1 << 20,
+		// Issue #151 (H12 audit, Sprint 0B): TLS nativo opcional. Se
+		// MEZ_HTTP_TLS_CERT_FILE + _KEY_FILE estão setados, ListenAndServeTLS
+		// é usado em vez de ListenAndServe. Em prod recomenda-se proxy
+		// reverso; isto é fallback.
+	}
+	// Issue #151: se TLS nativo setado, ListenAndServeTLS; senão plain.
+	tlsEnabled := cfg.HTTPTLSCertFile != "" && cfg.HTTPTLSKeyFile != ""
+	if tlsEnabled {
+		srv.TLSConfig = nil // usa default (TLS 1.2+)
 	}
 
 	return &AppContext{
@@ -366,7 +447,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		ConvRepo: convRepo, MsgRepo: msgRepo, TenantRepo: tenantRepo,
 		SenderRegistry: senderRegistry, SenderService: senderSvc, ListService: listSvc,
 		StatusConsumer: statusConsumer,
-		Keyring: keyring, CredsRepo: credsRepo,
+		Keyring:        keyring, CredsRepo: credsRepo,
 		Ingestor: ingestor, Router: routerSvc, Relay: relay, Reconciler: reconciler,
 		BackupService: backupSvc, Store: store, AdminVerifier: loginSvc,
 		AdminServer: adminSrv,
@@ -384,7 +465,16 @@ func runWithGracefulShutdown(ctx context.Context, app *AppContext) error {
 	// Goroutine: HTTP server.
 	go func() {
 		app.Log.Info().Str("addr", app.Cfg.HTTPAddr).Msg("http: listening")
-		if err := app.HTTPServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		// Issue #151 (H12 audit, Sprint 0B): TLS nativo opcional.
+		// Se cert+key setados, ListenAndServeTLS; senão plain.
+		var err error
+		if app.Cfg.HTTPTLSCertFile != "" && app.Cfg.HTTPTLSKeyFile != "" {
+			app.Log.Info().Str("cert", app.Cfg.HTTPTLSCertFile).Msg("http: TLS enabled")
+			err = app.HTTPServer.ListenAndServeTLS(app.Cfg.HTTPTLSCertFile, app.Cfg.HTTPTLSKeyFile)
+		} else {
+			err = app.HTTPServer.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			errCh <- fmt.Errorf("http: %w", err)
 		}
 	}()
@@ -437,3 +527,28 @@ func runWithGracefulShutdown(ctx context.Context, app *AppContext) error {
 }
 
 var _ = chi.NewRouter
+
+// redactedHost extrai o host:port de uma DSN pgx para log (sem senha).
+// Ex.: "postgres://user:pass@host:5432/db?sslmode=disable" → "host:5432".
+func redactedHost(dsn string) string {
+	// Procura o último @ antes do ?.
+	at := -1
+	for i := 0; i < len(dsn); i++ {
+		if dsn[i] == '@' {
+			at = i
+		} else if dsn[i] == '?' {
+			break
+		}
+	}
+	if at < 0 || at+1 >= len(dsn) {
+		return "<invalid dsn>"
+	}
+	rest := dsn[at+1:]
+	// Trim query.
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '?' {
+			return rest[:i]
+		}
+	}
+	return rest
+}

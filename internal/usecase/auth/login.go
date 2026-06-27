@@ -174,18 +174,30 @@ func (s *LoginService) StartOIDC(ctx context.Context, redirectAfter string) (str
 	}
 	verifier := base64.RawURLEncoding.EncodeToString(verifierBytes)
 
+	// Issue #147 (H2 audit, Sprint 0B): nonce gerado por StartOIDC, incluído
+	// no AuthCodeURL via SetAuthURLParam, validado no callback contra o
+	// claim nonce do ID-token. Bloqueia replay de ID-token capturado.
+	nonceBytes := make([]byte, 16)
+	if _, err := rand.Read(nonceBytes); err != nil {
+		return "", "", err
+	}
+	nonce := base64.RawURLEncoding.EncodeToString(nonceBytes)
+
 	challenge := oidcChallenge(verifier)
 
 	oidcState := admin.OIDCState{
 		State:         state,
 		CodeVerifier:  verifier,
 		RedirectAfter: redirectAfter,
+		Nonce:         nonce,
 	}
 	if err := s.stateStore.SaveState(ctx, state, oidcState, 300); err != nil {
 		return "", "", err
 	}
 
-	authURL := s.idp.AuthCodeURL(state, challenge)
+	// AuthCodeURL com nonce injetado. IdP deve ecoar o mesmo nonce
+	// no ID-token; verificação no callback (verifier.go::Verify).
+	authURL := s.idp.AuthCodeURLWithNonce(state, challenge, nonce)
 	return authURL, state, nil
 }
 

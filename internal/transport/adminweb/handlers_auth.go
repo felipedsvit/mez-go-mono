@@ -80,7 +80,10 @@ func (s *Server) handleLoginPOST(w http.ResponseWriter, r *http.Request) {
 		Value:    string(result.SessionID),
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false,
+		// Issue #131 (Sprint 0A C3 audit): prefixo __Host- exige Secure=true
+		// (RFC 6265bis). Override via MEZ_SESSION_COOKIE_SECURE=false em dev
+		// local sem HTTPS (testcontainers).
+		Secure:   s.sessionCfg.Secure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(s.sessionCfg.TTL.Seconds()),
 	})
@@ -155,7 +158,9 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		Value:    string(result.SessionID),
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   false,
+		// Issue #131 (Sprint 0A C3 audit): prefixo __Host- exige Secure=true
+		// (RFC 6265bis). Override via MEZ_SESSION_COOKIE_SECURE=false em dev.
+		Secure:   s.sessionCfg.Secure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(s.sessionCfg.TTL.Seconds()),
 	})

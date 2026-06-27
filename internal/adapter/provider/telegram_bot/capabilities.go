@@ -3,8 +3,8 @@ package telegram_bot
 import "github.com/felipedsvit/mez-go-mono/internal/core/port"
 
 // TelegramCapabilities é a matriz TG: text, media, reactions, edit, delete,
-// typing, presence, groups, inline_keyboard, forum, payments, gifts, newsletter.
-// Quase tudo que o Bot API permite.
+// typing, presence, groups, inline_keyboard, forum, gifts, newsletter.
+// Pagamentos é gated por WithPayments(true) (default off).
 //
 // Movida de port.CapabilitiesTelegram em #120. Exportada para wire.go.
 func TelegramCapabilities() port.CapabilitySet {
@@ -19,7 +19,6 @@ func TelegramCapabilities() port.CapabilitySet {
 		port.CapGroups:         true,
 		port.CapInlineKeyboard: true,
 		port.CapForum:          true,
-		port.CapPayments:       true,
 		port.CapGifts:          true,
 		port.CapNewsletter:     true,
 	}
