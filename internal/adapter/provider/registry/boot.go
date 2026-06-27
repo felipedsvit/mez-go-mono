@@ -1,12 +1,14 @@
-// Package registry — boot.go: wire-up do SenderRegistry (Fase 3 #52 + Fase 4 #67).
+// Package registry — boot.go: wire-up do SenderRegistry (Fase 3 #52 + Fase 4 #67 + Fase 7).
 //
-// Carrega credenciais via EnvCredentials e cria factories para cada canal
-// registrado. As factories são passadas para o port.MemorySenderRegistry
-// (lazy init per-tenant).
+// Fase 7: credenciais são resolvidas via port.CredentialsResolver (Keyring em
+// produção). Cada factory chama ResolveCredentials e faz Unmarshal do JSON de
+// retorno na struct canal-específica. O formato dos bytes é contrato entre
+// usecase/secrets.Keyring (SetCredentials) e as factories aqui.
 package registry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/rs/zerolog"
@@ -16,7 +18,6 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/telegram_bot"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/waba"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/whatsmeow"
-	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/secrets"
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 )
@@ -31,17 +32,17 @@ type BuildOpts struct {
 	Whatsmeow *WhatsmeowDeps
 }
 
-// Build constrói o SenderRegistry e registra factories para os 5 canais
-// implementados nas Fases 3+4 (WABA/IG/MSG/TG/WhatsMeow).
-func Build(creds *secrets.EnvCredentials, log zerolog.Logger, opts BuildOpts) port.SenderRegistry {
+// Build constrói o SenderRegistry e registra factories para os 5 canais.
+// resolver é o port.CredentialsResolver — em produção é o Keyring (Fase 7);
+// em dev/test pode ser qualquer implementação.
+func Build(resolver port.CredentialsResolver, log zerolog.Logger, opts BuildOpts) port.SenderRegistry {
 	reg := port.NewMemorySenderRegistry(log, 0)
 
-	reg.Register(domain.ChannelWABA, wabaFactory(creds, log))
-	reg.Register(domain.ChannelIG, instagramFactory(creds, log))
-	reg.Register(domain.ChannelMSG, messengerFactory(creds, log))
-	reg.Register(domain.ChannelTGBot, telegramFactory(creds, log))
+	reg.Register(domain.ChannelWABA, wabaFactory(resolver, log))
+	reg.Register(domain.ChannelIG, instagramFactory(resolver, log))
+	reg.Register(domain.ChannelMSG, messengerFactory(resolver, log))
+	reg.Register(domain.ChannelTGBot, telegramFactory(resolver, log))
 
-	// Fase 4: factory whatsmeow via Manager.
 	if opts.Whatsmeow != nil && opts.Whatsmeow.Manager != nil {
 		reg.Register(domain.ChannelWAWeb, whatsmeowFactory(opts.Whatsmeow.Manager, log))
 	}
@@ -49,55 +50,86 @@ func Build(creds *secrets.EnvCredentials, log zerolog.Logger, opts BuildOpts) po
 	return reg
 }
 
-func wabaFactory(creds *secrets.EnvCredentials, log zerolog.Logger) port.SenderFactory {
-	return func(_ context.Context, tenantID domain.TenantID) (port.Sender, error) {
-		c, err := creds.ResolveWABA(tenantID)
+// wabaCredentials é o formato JSON armazenado no Keyring para WABA.
+type wabaCredentials struct {
+	PhoneNumberID string `json:"phone_number_id"`
+	AccessToken   string `json:"access_token"`
+}
+
+func wabaFactory(resolver port.CredentialsResolver, log zerolog.Logger) port.SenderFactory {
+	return func(ctx context.Context, tenantID domain.TenantID) (port.Sender, error) {
+		raw, err := resolver.ResolveCredentials(ctx, tenantID, domain.ChannelWABA)
 		if err != nil {
-			return nil, fmt.Errorf("waba: %w", err)
+			return nil, fmt.Errorf("waba credentials: %w", err)
+		}
+		var c wabaCredentials
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, fmt.Errorf("waba credentials parse: %w", err)
 		}
 		client := waba.NewClient("", "", c.PhoneNumberID, c.AccessToken)
 		return waba.New(tenantID, client, log), nil
 	}
 }
 
-func instagramFactory(creds *secrets.EnvCredentials, log zerolog.Logger) port.SenderFactory {
-	return func(_ context.Context, tenantID domain.TenantID) (port.Sender, error) {
-		c, err := creds.ResolveInstagram(tenantID)
+// metaPageCredentials é o formato JSON armazenado no Keyring para IG e MSG.
+type metaPageCredentials struct {
+	PageID      string `json:"page_id"`
+	AccessToken string `json:"access_token"`
+}
+
+func instagramFactory(resolver port.CredentialsResolver, log zerolog.Logger) port.SenderFactory {
+	return func(ctx context.Context, tenantID domain.TenantID) (port.Sender, error) {
+		raw, err := resolver.ResolveCredentials(ctx, tenantID, domain.ChannelIG)
 		if err != nil {
-			return nil, fmt.Errorf("instagram: %w", err)
+			return nil, fmt.Errorf("instagram credentials: %w", err)
+		}
+		var c metaPageCredentials
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, fmt.Errorf("instagram credentials parse: %w", err)
 		}
 		client := instagram.NewClient("", "", c.PageID, c.AccessToken)
 		return instagram.New(tenantID, client, log), nil
 	}
 }
 
-func messengerFactory(creds *secrets.EnvCredentials, log zerolog.Logger) port.SenderFactory {
-	return func(_ context.Context, tenantID domain.TenantID) (port.Sender, error) {
-		c, err := creds.ResolveMessenger(tenantID)
+func messengerFactory(resolver port.CredentialsResolver, log zerolog.Logger) port.SenderFactory {
+	return func(ctx context.Context, tenantID domain.TenantID) (port.Sender, error) {
+		raw, err := resolver.ResolveCredentials(ctx, tenantID, domain.ChannelMSG)
 		if err != nil {
-			return nil, fmt.Errorf("messenger: %w", err)
+			return nil, fmt.Errorf("messenger credentials: %w", err)
+		}
+		var c metaPageCredentials
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, fmt.Errorf("messenger credentials parse: %w", err)
 		}
 		client := messenger.NewClient("", "", c.AccessToken)
 		return messenger.New(tenantID, client, log), nil
 	}
 }
 
-func telegramFactory(creds *secrets.EnvCredentials, log zerolog.Logger) port.SenderFactory {
-	return func(_ context.Context, tenantID domain.TenantID) (port.Sender, error) {
-		c, err := creds.ResolveTelegram(tenantID)
+// telegramCredentials é o formato JSON armazenado no Keyring para TG Bot.
+type telegramCredentials struct {
+	BotToken string `json:"bot_token"`
+}
+
+func telegramFactory(resolver port.CredentialsResolver, log zerolog.Logger) port.SenderFactory {
+	return func(ctx context.Context, tenantID domain.TenantID) (port.Sender, error) {
+		raw, err := resolver.ResolveCredentials(ctx, tenantID, domain.ChannelTGBot)
 		if err != nil {
-			return nil, fmt.Errorf("telegram: %w", err)
+			return nil, fmt.Errorf("telegram credentials: %w", err)
+		}
+		var c telegramCredentials
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, fmt.Errorf("telegram credentials parse: %w", err)
 		}
 		client := &stubBotClient{token: c.BotToken}
 		return telegram_bot.New(tenantID, client, log), nil
 	}
 }
 
-// whatsmeowFactory retorna uma factory que delega ao Manager (per-tenant lazy).
+// whatsmeowFactory delega ao Manager (per-tenant lazy).
 func whatsmeowFactory(mgr *whatsmeow.Manager, log zerolog.Logger) port.SenderFactory {
 	return func(ctx context.Context, tenantID domain.TenantID) (port.Sender, error) {
-		// Fase 4: usamos o stub client por padrão (sem credenciais reais).
-		// production: substitui por *whatsmeow.Client com sqlstore pareado.
 		adapter, err := mgr.GetOrCreate(ctx, tenantID, func(_ context.Context, _ domain.TenantID) (whatsmeow.Client, error) {
 			return whatsmeow.NewStubClient(string(tenantID), log), nil
 		})

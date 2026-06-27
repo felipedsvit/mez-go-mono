@@ -232,11 +232,13 @@ func TestRLSFailClosed(t *testing.T) {
 	})
 
 	t.Run("MezPlatform_CanWriteAdminUsers", func(t *testing.T) {
-		// mez_platform has BYPASSRLS — used by RunAsPlatform wrapper. Verifies
-		// that the control plane path is unblocked.
+		// mez_platform has BYPASSRLS — usado pelo RunAsPlatform wrapper. Verifica
+		// que o caminho do control plane está desbloqueado.
 		var id string
 		err := platformPool.QueryRow(ctx,
-			`INSERT INTO admin_users (email) VALUES ('rls-test@example.com') RETURNING id`).Scan(&id)
+			`INSERT INTO admin_users (email, auth_kind, idp_subject, idp_issuer)
+			 VALUES ('rls-test@example.com', 'oidc', 'rls-test-subject', 'rls-test-issuer')
+			 RETURNING id`).Scan(&id)
 		if err != nil {
 			t.Fatalf("mez_platform should be able to INSERT admin_users, got: %v", err)
 		}

@@ -66,3 +66,16 @@ type OutboxRelay interface {
 	// se já está em dlq).
 	MarkDLQ(ctx context.Context, id domain.MessageID, lastErr error) error
 }
+
+// CredentialRow é a view cross-tenant de uma credencial de canal. Usada pelo
+// ChannelCredentialsCrossTenant.ForEachTenant para iterar todas as linhas sem
+// expor o tipo concreto de um adapter específico. Vive em port para que
+// usecase/secrets e adapter/repository/postgres compartilhem o mesmo tipo sem
+// ciclo de import.
+type CredentialRow struct {
+	TenantID   domain.TenantID
+	Channel    domain.Channel
+	WrappedDEK []byte
+	Encrypted  []byte
+	KEKVersion int
+}

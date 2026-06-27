@@ -104,7 +104,14 @@ func setupDB(ctx context.Context, t *testing.T) (*pgxpool.Pool, *pgxpool.Pool, *
 }
 
 func applyAllMigrations(ctx context.Context, pool *pgxpool.Pool) error {
-	files := []string{"0001_init.up.sql", "0002_admin.up.sql", "0003_outbox_fks_indexes.up.sql"}
+	files := []string{
+		"0001_init.up.sql",
+		"0002_admin.up.sql",
+		"0003_outbox_fks_indexes.up.sql",
+		"0004_whatsmeow.up.sql",
+		"0005_backup_gucs.up.sql",
+		"0006_kek_version.up.sql",
+	}
 	for _, mf := range files {
 		candidates := []string{
 			filepath.Join("..", "..", migrationsDir, mf),
