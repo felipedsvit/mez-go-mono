@@ -190,6 +190,21 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	waStateR := postgres.NewWhatsAppStateRepo(appPool, platformPool)
 	waManager := whatsmeow.NewManager(whatsmeow.DefaultConfig(), waStateR, log)
 
+	// Fase 9 (#158): se MEZ_WHATSMEOW_ENABLED=true, injeta a factory real
+	// (sqlstore + device store). Caso contrário, Manager usa o stub
+	// (default). Aplica DeviceIdentity anti-ban antes do primeiro Connect.
+	if cfg.WhatsmeowEnabled && cfg.WhatsmeowDeviceDSN != "" {
+		identity := whatsmeow.IdentityFromConfig(cfg.WhatsmeowIdentityKind, cfg.WhatsmeowIdentityOS)
+		waManager.SetClientFactory(identity, whatsmeow.NewRealClientFactory(whatsmeow.RealFactoryConfig{
+			DeviceDSN:  cfg.WhatsmeowDeviceDSN,
+			Transcoder: nil, // transcoder real é ffmpeg — wire em #158 follow-up
+			Log:        log,
+		}))
+		log.Info().
+			Str("device_dsn_host", redactedHost(cfg.WhatsmeowDeviceDSN)).
+			Msg("whatsmeow: real client factory enabled (Phase 9)")
+	}
+
 	senderRegistry := providerregistry.Build(keyring, log, providerregistry.BuildOpts{
 		Whatsmeow: &providerregistry.WhatsmeowDeps{Manager: waManager},
 	})
@@ -438,3 +453,28 @@ func runWithGracefulShutdown(ctx context.Context, app *AppContext) error {
 }
 
 var _ = chi.NewRouter
+
+// redactedHost extrai o host:port de uma DSN pgx para log (sem senha).
+// Ex.: "postgres://user:pass@host:5432/db?sslmode=disable" → "host:5432".
+func redactedHost(dsn string) string {
+	// Procura o último @ antes do ?.
+	at := -1
+	for i := 0; i < len(dsn); i++ {
+		if dsn[i] == '@' {
+			at = i
+		} else if dsn[i] == '?' {
+			break
+		}
+	}
+	if at < 0 || at+1 >= len(dsn) {
+		return "<invalid dsn>"
+	}
+	rest := dsn[at+1:]
+	// Trim query.
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '?' {
+			return rest[:i]
+		}
+	}
+	return rest
+}

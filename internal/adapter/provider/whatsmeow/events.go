@@ -38,15 +38,35 @@ type EventProcessor struct {
 	tenant  domain.TenantID
 	adapter *Adapter
 	sink    BusSink
+	history HistoryPersister
 	log     zerolog.Logger
 }
 
+// HistoryPersister é o subset de *postgres.HistoryRepo que o processor usa.
+// Best-effort: se nil, HistorySync apenas loga (sem persistir).
+type HistoryPersister interface {
+	InsertMany(ctx context.Context, msgs []HistoryMessage) (int, error)
+}
+
+// HistoryMessage é a forma de entrada do HistoryPersister (espelha
+// o domain do postgres). Mantida aqui para desacoplar o processor
+// do postgres.HistoryRepo.
+type HistoryMessage struct {
+	JID       string
+	MsgID     string
+	Timestamp int64
+	FromMe    bool
+	Body      string
+	Type      string
+}
+
 // NewEventProcessor cria o processor.
-func NewEventProcessor(tenant domain.TenantID, adapter *Adapter, sink BusSink, log zerolog.Logger) *EventProcessor {
+func NewEventProcessor(tenant domain.TenantID, adapter *Adapter, sink BusSink, history HistoryPersister, log zerolog.Logger) *EventProcessor {
 	return &EventProcessor{
 		tenant:  tenant,
 		adapter: adapter,
 		sink:    sink,
+		history: history,
 		log:     log.With().Str("component", "whatsmeow.Events").Logger(),
 	}
 }
@@ -89,10 +109,103 @@ func (p *EventProcessor) ProcessEvent(ctx context.Context, evt any) {
 }
 
 // ProcessHistory processa um HistorySync (queue separada; OOM guard).
-func (p *EventProcessor) ProcessHistory(ctx context.Context, _ any) {
-	// Fase 4: bounded 1000 msgs/tenant. A persistência real (whatsapp_history)
-	// é stubbed — production faria lote de 100 por INSERT.
-	p.log.Info().Msg("whatsmeow: HistorySync recebido (bounded 1000/tenant; persistência Fase 4 stubbed)")
+//
+// Espera receber um *events.HistorySync (lib whatsmeow) ou um
+// HistorySyncEvent (stub local). Best-effort: se history for nil,
+// apenas loga e descarta. Se history estiver presente, persiste em
+// lote de até 1000 mensagens/tenant.
+func (p *EventProcessor) ProcessHistory(ctx context.Context, evt any) {
+	if p.history == nil {
+		p.log.Info().Msg("whatsmeow: HistorySync recebido (sem persister; log-only)")
+		return
+	}
+
+	msgs := extractHistoryMessages(evt)
+	if len(msgs) == 0 {
+		p.log.Info().Msg("whatsmeow: HistorySync vazio")
+		return
+	}
+
+	// bounded 1000.
+	if len(msgs) > 1000 {
+		msgs = msgs[:1000]
+	}
+
+	pubCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	inserted, err := p.history.InsertMany(pubCtx, msgs)
+	if err != nil {
+		p.log.Error().Err(err).Int("attempted", len(msgs)).Msg("whatsmeow: history persist failed")
+		return
+	}
+	p.log.Info().
+		Int("received", len(msgs)).
+		Int("inserted", inserted).
+		Msg("whatsmeow: HistorySync persistido")
+}
+
+// extractHistoryMessages extrai mensagens de diferentes fontes
+// (events.HistorySync do whatsmeow real ou HistorySyncEvent local).
+func extractHistoryMessages(evt any) []HistoryMessage {
+	switch v := evt.(type) {
+	case HistorySyncEvent:
+		// Stub local
+		out := make([]HistoryMessage, 0, len(v.Messages))
+		for _, m := range v.Messages {
+			out = append(out, HistoryMessage{
+				JID:       v.JID,
+				MsgID:     m.MsgID,
+				Timestamp: m.Timestamp,
+				FromMe:    m.FromMe,
+				Body:      m.Body,
+				Type:      m.Type,
+			})
+		}
+		return out
+	}
+	// Tenta extrair de *events.HistorySync (lib real) via type assertion
+	// dinâmica via interface. Mantemos simples aqui — a versão
+	// tipada está em history_translator.go.
+	if e, ok := evt.(interface {
+		GetConversations() []historyConversation
+	}); ok {
+		out := make([]HistoryMessage, 0, 64)
+		for _, c := range e.GetConversations() {
+			for _, m := range c.GetMessages() {
+				out = append(out, HistoryMessage{
+					JID:       c.GetJID(),
+					MsgID:     m.GetID(),
+					Timestamp: m.GetTimestamp(),
+					FromMe:    m.GetFromMe(),
+					Body:      m.GetBody(),
+					Type:      m.GetType(),
+				})
+				if len(out) >= 1000 {
+					return out
+				}
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// historyConversation é a interface mínima que extractHistoryMessages
+// usa para iterar HistorySync. Compatível com o que o whatsmeow real
+// emite (a versão concreta vem de types/events.HistorySync).
+type historyConversation interface {
+	GetJID() string
+	GetMessages() []historyMessageLite
+}
+
+// historyMessageLite é a forma lite (subset de waE2E.Message).
+type historyMessageLite interface {
+	GetID() string
+	GetTimestamp() int64
+	GetFromMe() bool
+	GetBody() string
+	GetType() string
 }
 
 func (p *EventProcessor) handleMessage(ctx context.Context, _ MessageEvent) {

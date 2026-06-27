@@ -46,6 +46,11 @@ type Config struct {
 	// WSTrustedProxy: honra X-Forwarded-Origin/-Proto. Apenas se
 	// houver reverse proxy controlado na frente.
 	WSTrustedProxy bool `mapstructure:"ws_trusted_proxy"`
+	// Fase 9 (#158): whatsmeow real client.
+	WhatsmeowEnabled     bool   `mapstructure:"whatsmeow_enabled"`
+	WhatsmeowDeviceDSN   string `mapstructure:"whatsmeow_device_dsn"`
+	WhatsmeowIdentityKind string `mapstructure:"whatsmeow_identity_kind"` // chrome|edge|none
+	WhatsmeowIdentityOS   string `mapstructure:"whatsmeow_identity_os"`
 }
 
 func Load() (Config, error) {
