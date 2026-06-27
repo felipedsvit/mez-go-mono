@@ -93,7 +93,7 @@ func newRouter(h *Handlers) *chi.Mux {
 }
 
 func TestListConversations_RequiresTenant(t *testing.T) {
-	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
+	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -114,7 +114,7 @@ func TestListConversations_OK(t *testing.T) {
 		Status:    domain.ConvStatusOpen,
 	}
 
-	h := New(zerolog.Nop(), convRepo, &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
+	h := New(zerolog.Nop(), convRepo, &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -137,7 +137,7 @@ func TestListConversations_OK(t *testing.T) {
 func TestPostMessage_RequiresFields(t *testing.T) {
 	// Fase 3: POST /api/messages é real; sem sender service retorna 503,
 	// com body inválido retorna 400.
-	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
+	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -153,7 +153,7 @@ func TestPostMessage_RequiresFields(t *testing.T) {
 }
 
 func TestListMessages_RequiresConversationID(t *testing.T) {
-	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
+	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -172,7 +172,7 @@ func TestConversationResolve_UpdatesStatus(t *testing.T) {
 		ID: "c1", Channel: domain.ChannelWABA, ContactID: "co1", Status: domain.ConvStatusOpen,
 	}
 
-	h := New(zerolog.Nop(), convRepo, &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
+	h := New(zerolog.Nop(), convRepo, &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()
@@ -192,7 +192,7 @@ func TestConversationResolve_UpdatesStatus(t *testing.T) {
 
 func TestChannelHealth_RequiresTenant(t *testing.T) {
 	// Fase 3: health agora exige tenant no contexto.
-	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil)
+	h := New(zerolog.Nop(), newFakeConvRepo(), &fakeMsgRepo{}, &fakeTenantRepo{}, nil, nil, nil)
 	r := newRouter(h)
 
 	rec := httptest.NewRecorder()

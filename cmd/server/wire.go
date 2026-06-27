@@ -34,6 +34,7 @@ import (
 
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/broker"
 	providerregistry "github.com/felipedsvit/mez-go-mono/internal/adapter/provider/registry"
+	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/whatsmeow"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/meta"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/secrets"
@@ -144,7 +145,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		_ = routerSvc
 	})
 
-	// 8. Sender pipeline (Fase 3): credentials + registry + service + relay.
+	// 8. Sender pipeline (Fase 3+4): credentials + registry + service + relay.
 	creds, err := secrets.NewEnvCredentials()
 	if err != nil {
 		return nil, fmt.Errorf("load credentials: %w", err)
@@ -154,7 +155,15 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	resolver.Register(domain.ChannelIG, port.CapabilitiesInstagram())
 	resolver.Register(domain.ChannelMSG, port.CapabilitiesMessenger())
 	resolver.Register(domain.ChannelTGBot, port.CapabilitiesTelegram())
-	senderRegistry := providerregistry.Build(creds, log)
+	resolver.Register(domain.ChannelWAWeb, port.CapabilitiesWhatsMeow())
+
+	// Fase 4: Manager whatsmeow (1 client/tenant, lazy init).
+	waStateR := postgres.NewWhatsAppStateRepo(appPool, platformPool)
+	waManager := whatsmeow.NewManager(whatsmeow.DefaultConfig(), waStateR, log)
+
+	senderRegistry := providerregistry.Build(creds, log, providerregistry.BuildOpts{
+		Whatsmeow: &providerregistry.WhatsmeowDeps{Manager: waManager},
+	})
 
 	pollInterval, err := time.ParseDuration(cfg.OutboxPollInterval)
 	if err != nil || pollInterval <= 0 {
@@ -217,6 +226,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		JWTSecret:       jwtSecret,
 		SenderService:   senderSvc,
 		SenderRegistry:  senderRegistry,
+		QRCodeProvider:  waManager, // Fase 4: Manager implementa CurrentQR
 	})
 	srv := &http.Server{
 		Addr:         cfg.HTTPAddr,

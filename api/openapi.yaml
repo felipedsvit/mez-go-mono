@@ -1,8 +1,8 @@
 openapi: "3.1.0"
 info:
   title: Mez Go Mono API
-  description: Omnichannel Messaging Gateway API (Phase 3 — Outbound Pipeline)
-  version: "0.3.0"
+  description: Omnichannel Messaging Gateway API (Phase 4 — WhatsMeow canal informal)
+  version: "0.4.0"
 servers:
   - url: /
 security:
@@ -263,7 +263,7 @@ paths:
 
   /api/channels/{channel}/health:
     get:
-      summary: "Health of a channel (Fase 3 - registry-driven)"
+      summary: "Health of a channel (Fase 4: whatsmeow é real, não stub)"
       operationId: channelHealth
       parameters:
         - name: channel
@@ -281,6 +281,24 @@ paths:
                 $ref: "#/components/schemas/ChannelHealth"
         "404":
           description: Channel not registered
+
+  /api/channels/whatsmeow/qrcode:
+    get:
+      summary: "Get the current WhatsMeow QR code for pairing (Fase 4)"
+      operationId: whatsmeowQRCode
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: QR code returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QRCodeResponse"
+        "204":
+          description: Already connected (no QR needed)
+        "404":
+          description: Tenant not found or not paired
 
 components:
   securitySchemes:
@@ -494,6 +512,19 @@ components:
           type: string
         phase:
           type: string
+
+    QRCodeResponse:
+      type: object
+      properties:
+        tenant:
+          type: string
+          format: uuid
+        qr:
+          type: string
+          description: "QR code string (base64-friendly)"
+        provider:
+          type: string
+          enum: [whatsmeow]
 
     MetaWebhookPayload:
       type: object

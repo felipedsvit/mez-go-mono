@@ -1,4 +1,4 @@
-// Package registry — boot.go: wire-up do SenderRegistry (Fase 3 #52).
+// Package registry — boot.go: wire-up do SenderRegistry (Fase 3 #52 + Fase 4 #67).
 //
 // Carrega credenciais via EnvCredentials e cria factories para cada canal
 // registrado. As factories são passadas para o port.MemorySenderRegistry
@@ -15,21 +15,36 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/messenger"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/telegram_bot"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/waba"
+	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/whatsmeow"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/webhook/secrets"
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
 	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 )
 
-// Build constrói o SenderRegistry e registra factories para os 4 canais
-// implementados na Fase 3 (WABA/IG/MSG/TG). whatsmeow é deliberadamente
-// omitido (Phase 4).
-func Build(creds *secrets.EnvCredentials, log zerolog.Logger) port.SenderRegistry {
+// WhatsmeowDeps agrupa as dependências do whatsmeow para o Manager (Fase 4).
+type WhatsmeowDeps struct {
+	Manager *whatsmeow.Manager
+}
+
+// BuildOpts configura o Build.
+type BuildOpts struct {
+	Whatsmeow *WhatsmeowDeps
+}
+
+// Build constrói o SenderRegistry e registra factories para os 5 canais
+// implementados nas Fases 3+4 (WABA/IG/MSG/TG/WhatsMeow).
+func Build(creds *secrets.EnvCredentials, log zerolog.Logger, opts BuildOpts) port.SenderRegistry {
 	reg := port.NewMemorySenderRegistry(log, 0)
 
 	reg.Register(domain.ChannelWABA, wabaFactory(creds, log))
 	reg.Register(domain.ChannelIG, instagramFactory(creds, log))
 	reg.Register(domain.ChannelMSG, messengerFactory(creds, log))
 	reg.Register(domain.ChannelTGBot, telegramFactory(creds, log))
+
+	// Fase 4: factory whatsmeow via Manager.
+	if opts.Whatsmeow != nil && opts.Whatsmeow.Manager != nil {
+		reg.Register(domain.ChannelWAWeb, whatsmeowFactory(opts.Whatsmeow.Manager, log))
+	}
 
 	return reg
 }
@@ -73,15 +88,27 @@ func telegramFactory(creds *secrets.EnvCredentials, log zerolog.Logger) port.Sen
 		if err != nil {
 			return nil, fmt.Errorf("telegram: %w", err)
 		}
-		// Phase 3: cliente stub (não chama real Bot API). Phase 4 wire ao SDK.
 		client := &stubBotClient{token: c.BotToken}
 		return telegram_bot.New(tenantID, client, log), nil
 	}
 }
 
+// whatsmeowFactory retorna uma factory que delega ao Manager (per-tenant lazy).
+func whatsmeowFactory(mgr *whatsmeow.Manager, log zerolog.Logger) port.SenderFactory {
+	return func(ctx context.Context, tenantID domain.TenantID) (port.Sender, error) {
+		// Fase 4: usamos o stub client por padrão (sem credenciais reais).
+		// production: substitui por *whatsmeow.Client com sqlstore pareado.
+		adapter, err := mgr.GetOrCreate(ctx, tenantID, func(_ context.Context, _ domain.TenantID) (whatsmeow.Client, error) {
+			return whatsmeow.NewStubClient(string(tenantID), log), nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		return adapter, nil
+	}
+}
+
 // stubBotClient implementa telegram_bot.BotClient sem chamar o Bot API real.
-// Usado em Fase 3 para que o pipeline funcione end-to-end sem credenciais
-// reais. Phase 4 substitui por *tgbot.Bot.
 type stubBotClient struct {
 	token string
 }

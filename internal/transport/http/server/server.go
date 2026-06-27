@@ -45,6 +45,7 @@ type Services struct {
 	JWTSecret       []byte
 	SenderService   *ucmessaging.SenderService
 	SenderRegistry  port.SenderRegistry
+	QRCodeProvider  api.QRCodeProvider
 }
 
 // New cria o http.Handler com todas as rotas montadas.
@@ -82,7 +83,7 @@ func New(svc Services) http.Handler {
 	}
 	apiMw := apimw.BearerAuth(apimw.BearerAuthConfig{Secret: jwtSecret}, svc.Log)
 
-	apiH := api.New(svc.Log, svc.ConvRepo, svc.MsgRepo, svc.TenantRepo, svc.SenderService, svc.SenderRegistry)
+	apiH := api.New(svc.Log, svc.ConvRepo, svc.MsgRepo, svc.TenantRepo, svc.SenderService, svc.SenderRegistry, svc.QRCodeProvider)
 	r.Route("/api", func(r chi.Router) {
 		r.Use(apiMw)
 		apiH.Register(r)
