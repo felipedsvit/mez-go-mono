@@ -13,6 +13,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	sendermem "github.com/felipedsvit/mez-go-mono/internal/adapter/sender/memory"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/instagram"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/messenger"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/telegram_bot"
@@ -35,8 +36,11 @@ type BuildOpts struct {
 // Build constrói o SenderRegistry e registra factories para os 5 canais.
 // resolver é o port.CredentialsResolver — em produção é o Keyring (Fase 7);
 // em dev/test pode ser qualquer implementação.
+//
+// Issue #121: usa internal/adapter/sender/memory ao invés de
+// port.MemorySenderRegistry (que foi removido do port).
 func Build(resolver port.CredentialsResolver, log zerolog.Logger, opts BuildOpts) port.SenderRegistry {
-	reg := port.NewMemorySenderRegistry(log, 0)
+	reg := sendermem.New(log, 0)
 
 	reg.Register(domain.ChannelWABA, wabaFactory(resolver, log))
 	reg.Register(domain.ChannelIG, instagramFactory(resolver, log))

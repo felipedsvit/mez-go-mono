@@ -198,7 +198,7 @@ func TestChannelCredentials_UpsertGet_RoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var got *domain.ChannelCredentials
+	var got *port.CredentialRow
 	err = fx.txRunner.RunInTenantTx(ctx, fx.tenantA, func(ctx context.Context) error {
 		var ferr error
 		got, ferr = fx.repo.Get(ctx, fx.tenantA, channel)
@@ -302,7 +302,7 @@ func TestChannelCredentials_UpdateWrappedDEK_PreservesEncrypted(t *testing.T) {
 	err := fx.repo.UpdateWrappedDEK(ctx, fx.tenantA, domain.ChannelWABA, newWrapped, 2, nil)
 	require.NoError(t, err)
 
-	var got *domain.ChannelCredentials
+	var got *port.CredentialRow
 	err = fx.txRunner.RunInTenantTx(ctx, fx.tenantA, func(ctx context.Context) error {
 		var ferr error
 		got, ferr = fx.repo.Get(ctx, fx.tenantA, domain.ChannelWABA)
@@ -328,7 +328,7 @@ func TestChannelCredentials_UpdateWrappedDEK_WithWindow(t *testing.T) {
 	err := fx.repo.UpdateWrappedDEK(ctx, fx.tenantA, domain.ChannelTGBot, []byte("w2"), 2, &window)
 	require.NoError(t, err)
 
-	var got *domain.ChannelCredentials
+	var got *port.CredentialRow
 	err = fx.txRunner.RunInTenantTx(ctx, fx.tenantA, func(ctx context.Context) error {
 		var ferr error
 		got, ferr = fx.repo.Get(ctx, fx.tenantA, domain.ChannelTGBot)

@@ -12,17 +12,19 @@ package secrets
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
+	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 )
 
-// ErrNotConfigured é retornado quando o secret não está configurado.
-var ErrNotConfigured = errors.New("secret not configured")
+// ErrNotConfigured é um alias para port.ErrCredentialsNotFound.
+// Mantido para retro-compatibilidade com testes externos e código que
+// checava errors.Is(err, secrets.ErrNotConfigured). Issue #119.
+var ErrNotConfigured = port.ErrCredentialsNotFound
 
 // EnvMetaSecrets resolve app secrets da Meta a partir da env var
 // MEZ_META_APP_SECRETS. Formato JSON:

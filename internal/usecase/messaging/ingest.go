@@ -16,9 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
@@ -80,9 +78,13 @@ func NewIngestor(
 	return i
 }
 
-// Ingest processa um evento inbound: resolve contact, resolve conversation,
-// insere a mensagem com dedup, enfileira outbox. Tudo dentro de uma tx
-// tenant-scoped.
+// Ingest processa um evento inbound: resolve contact, resolve conversation
+// (via AR), cria Message via Conversation.NewInboundMessage, enfileira
+// outbox. Tudo dentro de uma tx tenant-scoped.
+//
+// Issue #125: a Message é criada pelo AR (Conversation.NewInboundMessage),
+// não construída cru no usecase. Isso garante que toda Message inbound
+// referencia um Conversation válido e tem a FSM inicializada.
 //
 // Retorna o messageID criado (ou existente, em caso de dedup). Não retorna
 // erro se a mensagem já existia (idempotente).
@@ -98,6 +100,11 @@ func (i *Ingestor) Ingest(ctx context.Context, evt event.InboundEvent) (domain.M
 	}
 
 	tenantID := domain.TenantID(evt.TenantID)
+	channel := domain.Channel(evt.Channel)
+
+	// Peer ID = evt.MessageID se não houver campo específico. O adapter
+	// pode popular um campo dedicado no envelope no futuro (#37 follow-up).
+	peerID := evt.MessageID
 
 	var (
 		persistedID domain.MessageID
@@ -105,52 +112,36 @@ func (i *Ingestor) Ingest(ctx context.Context, evt event.InboundEvent) (domain.M
 	)
 
 	err := i.tx.RunInTenantTx(ctx, tenantID, func(ctx context.Context) error {
-		// 1. Resolve Contact (upsert idempotente).
-		contact := &domain.Contact{
-			ID:         domain.ContactID(uuid.NewString()),
-			TenantID:   tenantID,
-			Channel:    domain.Channel(evt.Channel),
-			ProviderID: evt.MessageID, // será sobrescrito abaixo com o peer ID real
+		// 1. Resolve Contact (upsert idempotente) — AR reference-by-ID.
+		contact, err := domain.NewContact(tenantID, channel, peerID)
+		if err != nil {
+			return fmt.Errorf("new contact: %w", err)
 		}
-		// Tenta extrair o peer ID do payload se existir; senão usa o MessageID
-		// do envelope (que pode ser o ID da mensagem e não do contato).
-		// O adapter deve popular evt.Recipient com o peer ID real; aqui
-		// apenas usamos o que vier.
-		contact.ProviderID = evt.MessageID
-
 		if err := i.contactRepo.Upsert(ctx, contact); err != nil {
 			return fmt.Errorf("upsert contact: %w", err)
 		}
 
-		// 2. Resolve Conversation (upsert idempotente por (tenant, channel, external_id)).
-		// external_id aqui = provider_msg_id do peer (ou evt.MessageID se não houver).
-		conv := &domain.Conversation{
-			ID:         domain.ConversationID(uuid.NewString()),
-			TenantID:   tenantID,
-			Channel:    domain.Channel(evt.Channel),
-			ContactID:  contact.ID,
-			Status:     domain.ConvStatusOpen,
-			ExternalID: evt.MessageID,
+		// 2. Cria o aggregate Conversation. O AR carrega o status
+		// (Open) e o externalID (peer ID) para idempotência de upsert.
+		conv, err := domain.NewConversation(tenantID, channel, contact.ID, peerID)
+		if err != nil {
+			return fmt.Errorf("new conversation: %w", err)
 		}
 		if err := i.convRepo.Upsert(ctx, conv); err != nil {
 			return fmt.Errorf("upsert conversation: %w", err)
 		}
 		convID = conv.ID
 
-		// 3. Insert Message com dedup ON CONFLICT.
-		msg := &domain.Message{
-			ID:             domain.MessageID(uuid.NewString()),
-			TenantID:       tenantID,
-			Channel:        domain.Channel(evt.Channel),
-			ConversationID: conv.ID,
-			ContactID:      contact.ID,
-			Direction:      domain.DirectionInbound,
-			Type:           domain.MessageTypeText,
-			Status:         domain.MessageStatusReceived,
-			Body:           "",
-			ProviderMsgID:  evt.MessageID,
-			CreatedAt:      time.Now(),
-			UpdatedAt:      time.Now(),
+		// 3. AR method: Conversation.NewInboundMessage cria a Message
+		// com FSM inicializada (Received) e toca UpdatedAt do AR.
+		// Issue #125 — o usecase não constrói Message cru.
+		msg, err := conv.NewInboundMessage("", evt.MessageID)
+		if err != nil {
+			return fmt.Errorf("new inbound message: %w", err)
+		}
+		// Persiste o AR atualizado (UpdatedAt mudou).
+		if err := i.convRepo.Upsert(ctx, conv); err != nil {
+			return fmt.Errorf("upsert conversation (post-AR): %w", err)
 		}
 		if err := i.messageRepo.Insert(ctx, msg); err != nil {
 			return fmt.Errorf("insert message: %w", err)

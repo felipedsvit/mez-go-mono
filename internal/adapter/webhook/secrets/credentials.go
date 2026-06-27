@@ -14,16 +14,17 @@ package secrets
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"sync"
 
 	"github.com/felipedsvit/mez-go-mono/internal/core/domain"
+	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 )
 
-// ErrCredentialsNotFound indica que o (tenant, channel) não tem credenciais.
-var ErrCredentialsNotFound = errors.New("credenciais não configuradas")
+// ErrCredentialsNotFound é um alias para port.ErrCredentialsNotFound.
+// Issue #119: consolidado em port.
+var ErrCredentialsNotFound = port.ErrCredentialsNotFound
 
 // Credentials é a forma unificada de credencial por canal.
 type Credentials struct {

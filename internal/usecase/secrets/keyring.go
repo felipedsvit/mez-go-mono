@@ -30,17 +30,17 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/core/port"
 )
 
-// ErrCredentialsNotFound é retornado quando (tenant, channel) não tem
-// credencial configurada. Mantido para compatibilidade com EnvCredentials
-// (carryover Fase 3 #50).
-var ErrCredentialsNotFound = errors.New("secrets: credenciais não configuradas")
+// ErrCredentialsNotFound é um alias para port.ErrCredentialsNotFound.
+// Mantido para retro-compatibilidade com código que importa
+// internal/usecase/secrets diretamente. Issue #119: consolidado em port.
+var ErrCredentialsNotFound = port.ErrCredentialsNotFound
 
 // CredentialsRepository é a abstração que o Keyring consome para persistir
 // e ler credenciais. Implementado por *postgres.ChannelCredentialsRepo (#90).
 //
 // Get/Upsert/Delete exigem RunInTenantTx no ctx (RLS fail-closed).
 type CredentialsRepository interface {
-	Get(ctx context.Context, tenantID domain.TenantID, channel domain.Channel) (*domain.ChannelCredentials, error)
+	Get(ctx context.Context, tenantID domain.TenantID, channel domain.Channel) (*port.CredentialRow, error)
 	Upsert(ctx context.Context, tenantID domain.TenantID, channel domain.Channel, wrappedDEK, encrypted []byte, kekVersion int) error
 	Delete(ctx context.Context, tenantID domain.TenantID, channel domain.Channel) error
 }

@@ -123,6 +123,12 @@ func (f *fakeOutbox) Insert(_ context.Context, _ *domain.Message) error {
 	f.inserts++
 	return nil
 }
+func (f *fakeOutbox) Enqueue(_ context.Context, _ *domain.OutboxMessage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.inserts++
+	return nil
+}
 func (f *fakeOutbox) PendingCount(_ context.Context) (int, error)                     { return 0, nil }
 func (f *fakeOutbox) ClaimNext(_ context.Context, _ int) ([]domain.Message, error)    { return nil, nil }
 func (f *fakeOutbox) MarkSent(_ context.Context, _ domain.MessageID) error            { return nil }

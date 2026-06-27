@@ -25,36 +25,49 @@ import (
 // As escritas (Enqueue) acontecem dentro de uma RunInTenantTx — RLS aplica
 // isolamento por tenant. As leituras (Claim) acontecem em uma transação
 // mez_platform (RunAsPlatform) porque o relay drena todos os tenants.
+//
+// Issue #122: a enumeração de tenants ativos é delegada para
+// port.TenantEnumerator (injetado). O OutboxRepo não lê mais a tabela
+// tenants diretamente — cross-context fica encapsulado no enumerator.
 type OutboxRepo struct {
 	appPool      *pgxpool.Pool
 	platformPool *pgxpool.Pool
+	tenants      port.TenantEnumerator
 }
 
-// NewOutboxRepo cria o repo. Recebe ambos os pools: appPool para Enqueue
-// (path normal, RLS), platformPool para Claim (cross-tenant, mez_platform).
-func NewOutboxRepo(appPool, platformPool *pgxpool.Pool) *OutboxRepo {
-	return &OutboxRepo{appPool: appPool, platformPool: platformPool}
+// NewOutboxRepo cria o repo. Recebe ambos os pools e o enumerator
+// cross-tenant (issue #122).
+func NewOutboxRepo(appPool, platformPool *pgxpool.Pool, tenants port.TenantEnumerator) *OutboxRepo {
+	return &OutboxRepo{appPool: appPool, platformPool: platformPool, tenants: tenants}
 }
 
 var _ port.OutboxWriter = (*OutboxRepo)(nil)
 var _ port.OutboxRelay = (*OutboxRepo)(nil)
 
-// Insert enfileira uma mensagem na fila outbound dentro da tx ativa no ctx.
-// RLS força tenant_id = mez.tenant_id.
+// Enqueue enfileira um OutboxMessage na fila outbound dentro da tx ativa
+// no ctx. RLS força tenant_id = mez.tenant_id.
 //
-// O payload é persistido como JSONB com {message_id, channel, target, body, ...}
-// para preservar o suficiente para a Fase 3 construir o request do provider.
-func (r *OutboxRepo) Insert(ctx context.Context, m *domain.Message) error {
-	q := appQFromCtx(ctx, r.appPool)
+// Issue #126: usa domain.OutboxMessage (que referencia Message por ID) em
+// vez de domain.Message cru. O payload é persistido como JSONB com o
+// message_id; o resto (body, metadata) fica na tabela messages.
+//
+// Decisão consciente (issue #126): NÃO consolidamos a tabela. O domínio
+// evolui para o agregado OutboxMessage; a tabela permanece paralela até
+// a issue 3.3 (domain events) trazê-los juntos.
+func (r *OutboxRepo) Enqueue(ctx context.Context, m *domain.OutboxMessage) error {
+	if m == nil {
+		return errors.New("outbox Enqueue: nil message")
+	}
+	q := appQFromCtxOrPool(ctx, r.appPool)
 
 	payload, err := json.Marshal(map[string]any{
-		"message_id":      string(m.ID),
+		"message_id":      string(m.MessageID),
 		"channel":         string(m.Channel),
 		"conversation_id": string(m.ConversationID),
 		"contact_id":      string(m.ContactID),
-		"type":            string(m.Type),
-		"body":            m.Body,
-		"metadata":        m.Metadata,
+		"outbox_id":       string(m.ID),
+		"status":          string(m.Status),
+		"attempts":        m.Attempts,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal outbox payload: %w", err)
@@ -70,13 +83,27 @@ func (r *OutboxRepo) Insert(ctx context.Context, m *domain.Message) error {
 
 	_, err = q.Exec(ctx,
 		`INSERT INTO outbound_events (tenant_id, channel, target, payload, status, attempts, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, 'pending', 0, NOW(), NOW())`,
-		m.TenantID, m.Channel, target, payload,
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())`,
+		m.TenantID, m.Channel, target, payload, string(m.Status), m.Attempts,
 	)
 	if err != nil {
 		return fmt.Errorf("outbox enqueue: %w", err)
 	}
 	return nil
+}
+
+// Insert é o wrapper de compat para código legado que ainda passa
+// *domain.Message. Constrói um OutboxMessage via NewOutboxMessage e
+// delega para Enqueue. Issue #126: deprecated.
+func (r *OutboxRepo) Insert(ctx context.Context, m *domain.Message) error {
+	if m == nil {
+		return errors.New("outbox Insert: nil message")
+	}
+	ob, err := domain.NewOutboxMessage(m.ID, m.TenantID, m.Channel, m.ConversationID, m.ContactID)
+	if err != nil {
+		return fmt.Errorf("outbox Insert: %w", err)
+	}
+	return r.Enqueue(ctx, ob)
 }
 
 // PendingCount retorna o total de mensagens pending em outbound_events
@@ -238,36 +265,15 @@ func (r *OutboxRepo) GetAttempts(ctx context.Context, id domain.MessageID) (int,
 //
 // Recebe uma função que recebe o tenantID e retorna erro. Se a função
 // retornar erro, a iteração para e o erro propaga.
+//
+// Issue #122: delega para port.TenantEnumerator. O OutboxRepo não toca
+// a tabela tenants diretamente. O enumerator faz streaming (não
+// materializa a lista — issue #123).
 func (r *OutboxRepo) ForEachTenant(ctx context.Context, fn func(tenantID domain.TenantID) error) error {
-	rows, err := r.platformPool.Query(ctx,
-		`SELECT id FROM tenants WHERE active = true ORDER BY created_at`,
-	)
-	if err != nil {
-		return fmt.Errorf("list tenants: %w", err)
+	if r.tenants == nil {
+		return errors.New("outbox ForEachTenant: TenantEnumerator não injetado (wire error)")
 	}
-	defer rows.Close()
-
-	var tenants []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return fmt.Errorf("scan tenant: %w", err)
-		}
-		tenants = append(tenants, id)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("rows tenants: %w", err)
-	}
-
-	for _, tid := range tenants {
-		if err := fn(domain.TenantID(tid)); err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return err
-			}
-			return fmt.Errorf("tenant %s: %w", tid, err)
-		}
-	}
-	return nil
+	return r.tenants.ForEachActive(ctx, fn)
 }
 
 // AcquireClaimLock abre uma transação mez_platform que detém os locks

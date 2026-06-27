@@ -44,7 +44,7 @@ func NewWhatsAppStateRepo(appPool, platformPool *pgxpool.Pool) *WhatsAppStateRep
 // LoadState carrega o estado de um (tenant, jid). Retorna zero value
 // (HealthScore=100) se não existir.
 func (r *WhatsAppStateRepo) LoadState(ctx context.Context, tenantID domain.TenantID, jid string) (AccountState, error) {
-	q := appQFromCtx(ctx, r.appPool)
+	q := appQFromCtxOrPool(ctx, r.appPool)
 	var st AccountState
 	var dayAnchor time.Time
 	var timelock, banned *time.Time
@@ -80,7 +80,7 @@ func (r *WhatsAppStateRepo) LoadState(ctx context.Context, tenantID domain.Tenan
 
 // SaveState upsert do estado.
 func (r *WhatsAppStateRepo) SaveState(ctx context.Context, st AccountState) error {
-	q := appQFromCtx(ctx, r.appPool)
+	q := appQFromCtxOrPool(ctx, r.appPool)
 	var timelock, banned *time.Time
 	if !st.TimelockUntil.IsZero() {
 		timelock = &st.TimelockUntil
@@ -112,7 +112,7 @@ func (r *WhatsAppStateRepo) SaveState(ctx context.Context, st AccountState) erro
 
 // LoadWarmupState implementa a interface whatsappStateSaver (subset).
 func (r *WhatsAppStateRepo) LoadWarmupState(ctx context.Context, tenant, jid string) (int, time.Time, time.Time, int) {
-	q := appQFromCtx(ctx, r.appPool)
+	q := appQFromCtxOrPool(ctx, r.appPool)
 	var ds, h int
 	var anchor, tl time.Time
 	err := q.QueryRow(ctx,
@@ -129,7 +129,7 @@ func (r *WhatsAppStateRepo) LoadWarmupState(ctx context.Context, tenant, jid str
 
 // SaveWarmupState implementa a interface whatsappStateSaver (subset).
 func (r *WhatsAppStateRepo) SaveWarmupState(ctx context.Context, tenant, jid string, ds int, anchor, timelock time.Time, health int) error {
-	q := appQFromCtx(ctx, r.appPool)
+	q := appQFromCtxOrPool(ctx, r.appPool)
 	var tl *time.Time
 	if !timelock.IsZero() {
 		tl = &timelock

@@ -45,6 +45,9 @@ type Services struct {
 	AdminRouter     chi.Router // opcional, do adminweb
 	JWTSecret       []byte
 	SenderService   *ucmessaging.SenderService
+	// ListService é o use case de leitura/assign/resolve (issue #126).
+	// Se nil, o handler usa fallback que rejeita os endpoints com 503.
+	ListService     *ucmessaging.ListService
 	SenderRegistry  port.SenderRegistry
 	QRCodeProvider  api.QRCodeProvider
 	// Fase 6: backup service e admin verifier (para reset) — opcionais;
@@ -88,7 +91,7 @@ func New(svc Services) http.Handler {
 	}
 	apiMw := apimw.BearerAuth(apimw.BearerAuthConfig{Secret: jwtSecret}, svc.Log)
 
-	apiH := api.New(svc.Log, svc.ConvRepo, svc.MsgRepo, svc.TenantRepo, svc.SenderService, svc.SenderRegistry, svc.QRCodeProvider)
+	apiH := api.New(svc.Log, svc.ConvRepo, svc.MsgRepo, svc.TenantRepo, svc.SenderService, svc.ListService, svc.SenderRegistry, svc.QRCodeProvider)
 	var backupH *api.BackupHandlers
 	if svc.BackupService != nil {
 		backupH = api.NewBackupHandlers(svc.BackupService, svc.AdminVerifier)

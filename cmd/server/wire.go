@@ -39,7 +39,11 @@ import (
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/broker"
 	memcache "github.com/felipedsvit/mez-go-mono/internal/adapter/cache/memory"
 	adaptercrypto "github.com/felipedsvit/mez-go-mono/internal/adapter/crypto"
+	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/instagram"
+	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/messenger"
 	providerregistry "github.com/felipedsvit/mez-go-mono/internal/adapter/provider/registry"
+	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/telegram_bot"
+	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/waba"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/provider/whatsmeow"
 	"github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres"
 	adminrepo "github.com/felipedsvit/mez-go-mono/internal/adapter/repository/postgres/admin"
@@ -86,6 +90,8 @@ type AppContext struct {
 	// Sender pipeline (Fase 3)
 	SenderRegistry port.SenderRegistry
 	SenderService  *ucmessaging.SenderService
+	// ListService é o use case de leitura (issue #126).
+	ListService    *ucmessaging.ListService
 	StatusConsumer *ucmessaging.StatusConsumer
 
 	// Fase 7: envelope encryption
@@ -135,7 +141,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	contactRepo := postgres.NewContactRepo(appPool)
 	convRepo := postgres.NewConversationRepo(appPool)
 	msgRepo := postgres.NewMessageRepo(appPool)
-	outboxRepo := postgres.NewOutboxRepo(appPool, platformPool)
+	outboxRepo := postgres.NewOutboxRepo(appPool, platformPool, postgres.NewTenantEnumerator(platformPool))
 	inboundEvsRepo := postgres.NewInboundEventsRepo(appPool, platformPool)
 
 	// 6. Bus
@@ -171,13 +177,14 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	credsRepo := postgres.NewChannelCredentialsRepo(appPool, platformPool, txRunner)
 	keyring := ucsecrets.New(credsRepo, localSealer, log)
 
-	// Capability resolver
+	// Capability resolver — cada adapter exporta sua matriz. Issue #120:
+	// matriz concreta de cada canal é responsabilidade do adapter, não do port.
 	resolver := port.NewResolver()
-	resolver.Register(domain.ChannelWABA, port.CapabilitiesWABA())
-	resolver.Register(domain.ChannelIG, port.CapabilitiesInstagram())
-	resolver.Register(domain.ChannelMSG, port.CapabilitiesMessenger())
-	resolver.Register(domain.ChannelTGBot, port.CapabilitiesTelegram())
-	resolver.Register(domain.ChannelWAWeb, port.CapabilitiesWhatsMeow())
+	resolver.Register(domain.ChannelWABA, waba.WABACapabilities())
+	resolver.Register(domain.ChannelIG, instagram.InstagramCapabilities())
+	resolver.Register(domain.ChannelMSG, messenger.MessengerCapabilities())
+	resolver.Register(domain.ChannelTGBot, telegram_bot.TelegramCapabilities())
+	resolver.Register(domain.ChannelWAWeb, whatsmeow.WhatsmeowCapabilities())
 
 	// 11. Whatsmeow Manager (1 client/tenant, lazy init).
 	waStateR := postgres.NewWhatsAppStateRepo(appPool, platformPool)
@@ -238,6 +245,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 	}, log)
 
 	senderSvc := ucmessaging.NewSenderService(msgRepo, outboxRepo, resolver, relay, log)
+	listSvc := ucmessaging.NewListService(convRepo, msgRepo, log)
 	statusConsumer := ucmessaging.NewStatusConsumer(bus, msgRepo, log)
 	statusConsumer.Subscribe()
 
@@ -329,6 +337,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		AdminRouter:     adminSrv.Router(), // Fase 6: montado em /admin
 		JWTSecret:       jwtSecret,
 		SenderService:   senderSvc,
+		ListService:     listSvc,
 		SenderRegistry:  senderRegistry,
 		QRCodeProvider:  waManager,
 		BackupService:   backupSvc,
@@ -346,7 +355,7 @@ func wireServices(ctx context.Context, cfg config.Config, log zerolog.Logger) (*
 		Log: log, Cfg: cfg, Health: hc, Metrics: metricsReg, Bus: bus, TxRunner: txRunner,
 		Outbox: outboxRepo, InboundEvs: inboundEvsRepo,
 		ConvRepo: convRepo, MsgRepo: msgRepo, TenantRepo: tenantRepo,
-		SenderRegistry: senderRegistry, SenderService: senderSvc,
+		SenderRegistry: senderRegistry, SenderService: senderSvc, ListService: listSvc,
 		StatusConsumer: statusConsumer,
 		Keyring: keyring, CredsRepo: credsRepo,
 		Ingestor: ingestor, Router: routerSvc, Relay: relay, Reconciler: reconciler,

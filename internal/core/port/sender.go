@@ -105,6 +105,11 @@ type Sender interface {
 	Channel() domain.Channel
 }
 
+// ErrSenderNotRegistered é retornado quando o channel não tem factory
+// registrada no SenderRegistry. Issue #121: movido de sender_registry.go
+// (que foi deletado) para cá.
+var ErrSenderNotRegistered = errors.New("sender não registrado para o canal")
+
 // ErrSenderNotImplemented é o sentinel para "sender não registrado" (legado
 // do NoopSender da Fase 2). Mantido para retro-compatibilidade.
 var ErrSenderNotImplemented = errors.New("sender não registrado (fase 3)")

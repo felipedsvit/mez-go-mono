@@ -22,18 +22,18 @@ const masterKeyB64 = "qWHjF67aiJj0afT9z7fKPi5S5fhQwA/EaQLT0QNr7rg="
 // unidade. Não toca DB.
 type fakeRepo struct {
 	mu   sync.Mutex
-	data map[string]*domain.ChannelCredentials
+	data map[string]*port.CredentialRow
 }
 
 func newFakeRepo() *fakeRepo {
-	return &fakeRepo{data: make(map[string]*domain.ChannelCredentials)}
+	return &fakeRepo{data: make(map[string]*port.CredentialRow)}
 }
 
 func keyOf(tenantID domain.TenantID, channel domain.Channel) string {
 	return string(tenantID) + "|" + string(channel)
 }
 
-func (r *fakeRepo) Get(_ context.Context, tenantID domain.TenantID, channel domain.Channel) (*domain.ChannelCredentials, error) {
+func (r *fakeRepo) Get(_ context.Context, tenantID domain.TenantID, channel domain.Channel) (*port.CredentialRow, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cc, ok := r.data[keyOf(tenantID, channel)]
@@ -48,7 +48,7 @@ func (r *fakeRepo) Get(_ context.Context, tenantID domain.TenantID, channel doma
 func (r *fakeRepo) Upsert(_ context.Context, tenantID domain.TenantID, channel domain.Channel, wrappedDEK, encrypted []byte, kekVersion int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.data[keyOf(tenantID, channel)] = &domain.ChannelCredentials{
+	r.data[keyOf(tenantID, channel)] = &port.CredentialRow{
 		TenantID:   tenantID,
 		Channel:    channel,
 		WrappedDEK: append([]byte(nil), wrappedDEK...),

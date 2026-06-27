@@ -71,7 +71,7 @@ func New(tenant domain.TenantID, client *Client, log zerolog.Logger) *Adapter {
 func (a *Adapter) Channel() domain.Channel { return domain.ChannelWABA }
 
 // Capabilities retorna o set suportado.
-func (a *Adapter) Capabilities() port.CapabilitySet { return port.CapabilitiesWABA() }
+func (a *Adapter) Capabilities() port.CapabilitySet { return WABACapabilities() }
 
 // Send entrega mensagem ou executa ação.
 func (a *Adapter) Send(ctx context.Context, req port.OutboundRequest) (string, error) {
