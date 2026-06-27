@@ -1,0 +1,7 @@
+package: api
+generate:
+  models: true
+  client: true
+  embedded-spec: false
+output: openapi.gen.go
+import-mapping: {}

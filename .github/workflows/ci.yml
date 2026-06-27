@@ -1,0 +1,148 @@
+# CI for mez-go-mono (issue #4). Build, lint, test, security, OpenAPI sync.
+# Pattern reference: mez-go .github/workflows/ci.yml + README §19.
+name: CI
+
+on:
+  push:
+    branches: [main, fase0, fase1, fase2, fase3, fase4, fase5, fase6, fase7, fase8]
+  pull_request:
+    branches: [main, fase0, fase1, fase2, fase3, fase4, fase5, fase6, fase7, fase8]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install tools
+        run: make tools
+
+      - name: Generate code
+        run: make generate
+
+      - name: gofmt check
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::arquivos não formatados (rode gofmt -w):"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "✓ Formatação OK"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Tests (race + shuffle)
+        run: go test -race -shuffle=on -count=1 -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.out
+          flags: unittests
+        continue-on-error: true
+
+  lint:
+    name: Lint (golangci)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install golangci-lint
+        run: make tools
+
+      - name: golangci-lint
+        run: make lint
+
+  openapi:
+    name: OpenAPI spec sync (D12)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install oapi-codegen
+        run: go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+
+      - name: OpenAPI validate
+        run: make openapi-validate
+
+  security:
+    name: Security Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          govulncheck ./...
+
+      - name: gosec
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -exclude-generated -no-fail -fmt sarif -out gosec-results.sarif ./...
+        continue-on-error: true
+
+      - name: Upload gosec SARIF
+        if: hashFiles('gosec-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec-results.sarif
+        continue-on-error: true
+
+  integration:
+    name: Integration (testcontainers)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Install migrate
+        run: go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+      - name: Integration tests
+        run: go test -tags integration -race -count=1 -shuffle=on -timeout 15m ./...
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: "true"

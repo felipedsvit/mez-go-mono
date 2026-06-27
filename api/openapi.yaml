@@ -1,0 +1,230 @@
+openapi: "3.1.0"
+info:
+  title: Mez Go Mono API
+  description: |
+    Omnichannel Messaging Gateway API. Phase 0: skeleton with health, setup,
+    and metrics endpoints. Full routes are added in Phase 1+ (see README §14).
+  version: "0.1.0"
+  contact:
+    name: mez-go-mono
+    url: https://github.com/felipedsvit/mez-go-mono
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: meta
+    description: Health, readiness, metrics (no auth)
+  - name: bootstrap
+    description: One-time admin setup (no auth, gated by 0 admins)
+
+paths:
+  /health:
+    get:
+      tags: [meta]
+      summary: Liveness probe
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is alive
+  /readyz:
+    get:
+      tags: [meta]
+      summary: Readiness probe
+      operationId: getReadyz
+      responses:
+        "200":
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyStatus"
+        "503":
+          description: Service not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /metrics:
+    get:
+      tags: [meta]
+      summary: Prometheus metrics
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Metrics in Prometheus text format
+  /setup:
+    get:
+      tags: [bootstrap]
+      summary: Setup wizard (only when zero admins exist)
+      operationId: getSetup
+      responses:
+        "200":
+          description: Setup form rendered
+          content:
+            text/html: {}
+        "404":
+          description: Setup is closed (admin already exists)
+    post:
+      tags: [bootstrap]
+      summary: Create the first admin
+      operationId: postSetup
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/SetupRequest"
+      responses:
+        "303":
+          description: Admin created; redirect to /login
+        "400":
+          description: Validation error
+          content:
+            text/html: {}
+
+components:
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Machine-readable error code
+        message:
+          type: string
+          description: Human-readable error message
+      example:
+        code: not_ready
+        message: postgres is not reachable
+
+    ReadyStatus:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+          description: Per-dependency status
+          example:
+            postgres: ok
+            s3: ok
+
+    SetupRequest:
+      type: object
+      required: [email, password, password_confirm]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        password_confirm:
+          type: string
+          minLength: 8
+
+    # Stubs — populated in Phase 1+ (issue #15 acceptance criterion: empty
+    # in Phase 0). Kept here so oapi-codegen has a stable type surface to
+    # generate against.
+    Tenant:
+      type: object
+      required: [id, name, slug]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Contact:
+      type: object
+      required: [id, tenant_id, channel, provider_id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        channel:
+          type: string
+          enum: [waba, whatsmeow, instagram, messenger, telegram_bot]
+        provider_id:
+          type: string
+        name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+
+    Conversation:
+      type: object
+      required: [id, tenant_id, channel, contact_id, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        channel:
+          type: string
+          enum: [waba, whatsmeow, instagram, messenger, telegram_bot]
+        contact_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [open, assigned, resolved, archived]
+
+    Message:
+      type: object
+      required: [id, tenant_id, channel, conversation_id, contact_id, direction, type, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        channel:
+          type: string
+          enum: [waba, whatsmeow, instagram, messenger, telegram_bot]
+        conversation_id:
+          type: string
+          format: uuid
+        contact_id:
+          type: string
+          format: uuid
+        direction:
+          type: string
+          enum: [inbound, outbound]
+        type:
+          type: string
+          enum: [text, image, audio, video, document, sticker, location, contact, reaction]
+        status:
+          type: string
+          enum: [received, routed, notified, sent, delivered, read, failed, dlq]
+        body:
+          type: string
+        provider_msg_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
