@@ -18,12 +18,16 @@ const (
 	ActionTenantUpdate     Action = "tenant:update"
 	ActionTenantStatus     Action = "tenant:status"
 	ActionTenantList       Action = "tenant:list"
-	ActionUserCreate       Action = "user:create"
-	ActionUserStatus       Action = "user:status"
-	ActionUserRoleAssign   Action = "user:role.assign"
-	ActionUserRoleRevoke   Action = "user:role.revoke"
-	ActionRoleCreate       Action = "role:create"
-	ActionRolePermissions  Action = "role:permissions"
+	// ActionTenantBackup is emitted by the backup service on successful export (#81).
+	ActionTenantBackup   Action = "tenant:backup"
+	ActionTenantRestore  Action = "tenant:restore"
+	ActionTenantReset    Action = "tenant:reset"
+	ActionUserCreate     Action = "user:create"
+	ActionUserStatus     Action = "user:status"
+	ActionUserRoleAssign Action = "user:role.assign"
+	ActionUserRoleRevoke Action = "user:role.revoke"
+	ActionRoleCreate     Action = "role:create"
+	ActionRolePermissions Action = "role:permissions"
 	// ActionPlatformAccess is emitted by the RunAsPlatform wrapper (C5).
 	// Every cross-tenant operation generates this entry before the operation
 	// runs; if the operation fails, the wrapper rolls back, including the
@@ -36,6 +40,7 @@ func (a Action) Valid() bool {
 	case ActionAuthLoginSuccess, ActionAuthLoginFailure, ActionAuthLogout,
 		ActionSetupBootstrap, ActionSetupRebootstrap,
 		ActionTenantCreate, ActionTenantUpdate, ActionTenantStatus, ActionTenantList,
+		ActionTenantBackup, ActionTenantRestore, ActionTenantReset,
 		ActionUserCreate, ActionUserStatus, ActionUserRoleAssign, ActionUserRoleRevoke,
 		ActionRoleCreate, ActionRolePermissions,
 		ActionPlatformAccess:

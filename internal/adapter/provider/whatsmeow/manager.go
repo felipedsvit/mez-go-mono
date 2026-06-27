@@ -153,6 +153,32 @@ func (m *Manager) DisconnectAll() {
 	m.log.Info().Int("clients", len(entries)).Msg("manager: disconnected all")
 }
 
+// Disconnect encerra o client de 1 tenant (usado pelo reset do tenant
+// — issue #83). Idempotente: retorna nil se o tenant não tem client ativo.
+// Após Disconnect, próximo GetOrCreate recria o client limpo.
+func (m *Manager) Disconnect(ctx context.Context, tenantID domain.TenantID) error {
+	m.mu.Lock()
+	e, ok := m.clients[tenantID]
+	if !ok {
+		m.mu.Unlock()
+		return nil // já não existe
+	}
+	delete(m.clients, tenantID)
+	// Remove também do LRU order.
+	for i, t := range m.order {
+		if t == tenantID {
+			m.order = append(m.order[:i], m.order[i+1:]...)
+			break
+		}
+	}
+	m.mu.Unlock()
+
+	e.dispatch.Stop()
+	e.adapter.client.Disconnect()
+	m.log.Info().Str("tenant", string(tenantID)).Msg("manager: tenant disconnected (reset)")
+	return nil
+}
+
 // Size retorna o número de clients ativos.
 func (m *Manager) Size() int {
 	m.mu.Lock()
